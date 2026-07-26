@@ -932,15 +932,6 @@ update_dat() {
     rm -rf "${dir_tmp}"
 }
 
-bbr_boost_sh() {
-    [ -f "tcp.sh" ] && rm -rf ./tcp.sh
-    wget -N --no-check-certificate "https://raw.githubusercontent.com/ylx2016/Linux-NetSpeed/master/tcp.sh" && chmod +x tcp.sh && ./tcp.sh
-}
-
-mtproxy_sh() {
-    echo -e "${Error} ${RedBG} 功能维护，暂不可用 ${Font}"
-}
-
 uninstall_all() {
     stop_process_systemd
     [[ -f $v2ray_systemd_file ]] && rm -f $v2ray_systemd_file
@@ -1074,9 +1065,6 @@ list() {
         ;;
     crontab_modify)
         acme_cron_update
-        ;;
-    boost)
-        bbr_boost_sh
         ;;
     dat_update)
         update_dat
