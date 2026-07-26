@@ -412,6 +412,8 @@ nginx_install() {
     make -j "${THREAD}" && make install
     judge "Nginx 编译安装"
 
+    ln -sf /etc/nginx/sbin/nginx /usr/local/sbin/nginx
+
     # 修改基本配置
     sed -i 's/#user  nobody;/user  root;/' ${nginx_dir}/conf/nginx.conf
     sed -i 's/worker_processes  1;/worker_processes  3;/' ${nginx_dir}/conf/nginx.conf
