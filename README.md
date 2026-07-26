@@ -19,7 +19,7 @@ wget -N --no-check-certificate -q -O install.sh "https://raw.githubusercontent.c
 - 最低系统要求提高至 Debian 11 / Ubuntu 20.04
 - SSL cipher 适配 OpenSSL 3.x
 - 支持更新 geoip.dat / geosite.dat
-- 移除 bbr / mtproxy
+- 移除 bbr / mtproxy / http/2 安装模式
 
 ### 管理脚本
 

@@ -31,7 +31,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.3.0.0"
+shell_version="1.4.0.0"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -270,12 +270,8 @@ modify_inbound_port() {
     if [[ "on" == "$old_config_status" ]]; then
         port="$(info_extraction '\"port\"')"
     fi
-    if [[ "$shell_mode" != "h2" ]]; then
-        PORT=$((RANDOM + 10000))
-        sed -i "/\"port\"/c  \    \"port\":${PORT}," ${v2ray_conf}
-    else
-        sed -i "/\"port\"/c  \    \"port\":${port}," ${v2ray_conf}
-    fi
+    PORT=$((RANDOM + 10000))
+    sed -i "/\"port\"/c  \    \"port\":${PORT}," ${v2ray_conf}
     judge "V2ray inbound_port 修改"
 }
 
@@ -537,14 +533,6 @@ v2ray_conf_add_tls() {
     modify_UUID
 }
 
-v2ray_conf_add_h2() {
-    cd /etc/v2ray || exit
-    wget --no-check-certificate https://raw.githubusercontent.com/layfu/vmess_ws-tls_bash_onekey/${github_branch}/http2/config.json -O config.json
-    modify_path
-    modify_inbound_port
-    modify_UUID
-}
-
 old_config_exist_check() {
     if [[ -f $v2ray_qr_config_file ]]; then
         echo -e "${OK} ${GreenBG} 检测到旧配置文件，是否读取旧文件配置 [Y/N]? ${Font}"
@@ -620,10 +608,8 @@ EOF
 start_process_systemd() {
     systemctl daemon-reload
     chown -R root:root /var/log/v2ray/
-    if [[ "$shell_mode" != "h2" ]]; then
-        systemctl restart nginx
-        judge "Nginx 启动"
-    fi
+    systemctl restart nginx
+    judge "Nginx 启动"
     systemctl restart v2ray
     judge "V2ray 启动"
 }
@@ -631,17 +617,13 @@ start_process_systemd() {
 enable_process_systemd() {
     systemctl enable v2ray
     judge "设置 v2ray 开机自启"
-    if [[ "$shell_mode" != "h2" ]]; then
-        systemctl enable nginx
-        judge "设置 Nginx 开机自启"
-    fi
+    systemctl enable nginx
+    judge "设置 Nginx 开机自启"
 
 }
 
 stop_process_systemd() {
-    if [[ "$shell_mode" != "h2" ]]; then
-        systemctl stop nginx
-    fi
+    systemctl stop nginx
     systemctl stop v2ray
 }
 nginx_process_disabled() {
@@ -689,23 +671,6 @@ vmess_qr_config_tls_ws() {
   "net": "ws",
   "type": "none",
   "host": "${domain}",
-  "path": "${camouflage}",
-  "tls": "tls"
-}
-EOF
-}
-
-vmess_qr_config_h2() {
-    cat >$v2ray_qr_config_file <<-EOF
-{
-  "v": "2",
-  "ps": "wulabing_${domain}",
-  "add": "${domain}",
-  "port": "${port}",
-  "id": "${UUID}",
-  "aid": "${alterID}",
-  "net": "h2",
-  "type": "none",
   "path": "${camouflage}",
   "tls": "tls"
 }
@@ -844,7 +809,7 @@ tls_type() {
         systemctl restart nginx
         judge "Nginx 重启"
     else
-        echo -e "${Error} ${RedBG} Nginx 或 配置文件不存在 或当前安装版本为 h2 ，请正确安装脚本后执行${Font}"
+        echo -e "${Error} ${RedBG} Nginx 或 配置文件不存在，请正确安装脚本后执行${Font}"
     fi
 }
 
@@ -975,8 +940,6 @@ judge_mode() {
     if [ -f $v2ray_bin_dir ] || [ -f $v2ray_bin_dir_old/v2ray ]; then
         if grep -q "ws" $v2ray_qr_config_file; then
             shell_mode="ws"
-        elif grep -q "h2" $v2ray_qr_config_file; then
-            shell_mode="h2"
         fi
     fi
 }
@@ -1006,28 +969,6 @@ install_v2ray_ws_tls() {
     start_process_systemd
     enable_process_systemd
     acme_cron_update
-}
-install_v2_h2() {
-    is_root
-    check_system
-    chrony_install
-    dependency_install
-    basic_optimization
-    domain_check
-    old_config_exist_check
-    port_alterid_set
-    v2ray_install
-    port_exist_check 80
-    port_exist_check "${port}"
-    v2ray_conf_add_h2
-    ssl_judge_and_install
-    vmess_qr_config_h2
-    basic_information
-    vmess_qr_link_image
-    show_information
-    start_process_systemd
-    enable_process_systemd
-
 }
 update_sh() {
     ol_version=$(curl -L -s -H 'Cache-Control: no-cache' https://raw.githubusercontent.com/layfu/vmess_ws-tls_bash_onekey/${github_branch}/install.sh | grep "shell_version=" | head -1 | awk -F '=|"' '{print $3}')
@@ -1091,8 +1032,6 @@ menu() {
     echo -e "—————————————— 安装向导 ——————————————"""
     echo -e "${Green}0.${Font}  升级 脚本"
     echo -e "${Green}1.${Font}  安装 V2Ray (Nginx+ws+tls)"
-    echo -e "${Green}2.${Font}  安装 V2Ray (http/2)"
-    echo -e "${Green}3.${Font}  升级 V2Ray core"
     echo -e "—————————————— 配置变更 ——————————————"
     echo -e "${Green}4.${Font}  变更 UUID"
     echo -e "${Green}5.${Font}  变更 port"
@@ -1119,10 +1058,6 @@ menu() {
         shell_mode="ws"
         install_v2ray_ws_tls
         ;;
-    2)
-        shell_mode="h2"
-        install_v2_h2
-        ;;
     3)
         bash <(curl -L -s https://raw.githubusercontent.com/layfu/vmess_ws-tls_bash_onekey/${github_branch}/v2ray.sh)
         ;;
@@ -1135,8 +1070,6 @@ menu() {
         read -rp "请输入连接端口:" port
         if grep -q "ws" $v2ray_qr_config_file; then
             modify_nginx_port
-        elif grep -q "h2" $v2ray_qr_config_file; then
-            modify_inbound_port
         fi
         start_process_systemd
         ;;
