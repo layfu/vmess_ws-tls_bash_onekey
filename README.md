@@ -28,11 +28,6 @@ Vmess+websocket+TLS+Nginx+Website
 wget -N --no-check-certificate -q -O install.sh "https://raw.githubusercontent.com/layfu/vmess_ws-tls_bash_onekey/master/install.sh" && chmod +x install.sh && bash install.sh
 ```
 
-VLESS+websocket+TLS+Nginx+Website
-```
-wget -N --no-check-certificate -q -O install.sh "https://raw.githubusercontent.com/layfu/vmess_ws-tls_bash_onekey/master/install.sh" && chmod +x install.sh && bash install.sh
-```
-
 ### 注意事项
 * 如果你不了解脚本中各项设置的具体含义，除域名外，请使用脚本提供的默认值
 * 使用本脚本需要你拥有 Linux 基础及使用经验，了解计算机网络部分知识，计算机基础操作
