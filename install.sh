@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #====================================================
-#	System Request:Debian 9+/Ubuntu 18.04+/Centos 7+
+#	System Request:Debian 11+/Ubuntu 20.04+/Centos 7+
 #	Author:	wulabing
 #	Dscription: V2ray ws+tls onekey Management
 #	Version: 1.0
@@ -53,9 +53,9 @@ v2ray_access_log="/var/log/v2ray/access.log"
 v2ray_error_log="/var/log/v2ray/error.log"
 amce_sh_file="/root/.acme.sh/acme.sh"
 ssl_update_file="/usr/bin/ssl_update.sh"
-nginx_version="1.20.1"
-openssl_version="1.1.1k"
-jemalloc_version="5.2.1"
+nginx_version="1.30.4"
+openssl_version="3.5.7"
+jemalloc_version="5.3.1"
 old_config_status="off"
 # v2ray_plugin_version="$(wget -qO- "https://github.com/shadowsocks/v2ray-plugin/tags" | grep -E "/shadowsocks/v2ray-plugin/releases/tag/" | head -1 | sed -r 's/.*tag\/v(.+)\">.*/\1/')"
 
@@ -78,12 +78,12 @@ check_system() {
     if [[ "${ID}" == "centos" && ${VERSION_ID} -ge 7 ]]; then
         echo -e "${OK} ${GreenBG} 当前系统为 Centos ${VERSION_ID} ${VERSION} ${Font}"
         INS="yum"
-    elif [[ "${ID}" == "debian" && ${VERSION_ID} -ge 8 ]]; then
+    elif [[ "${ID}" == "debian" && ${VERSION_ID} -ge 11 ]]; then
         echo -e "${OK} ${GreenBG} 当前系统为 Debian ${VERSION_ID} ${VERSION} ${Font}"
         INS="apt"
         $INS update
         ## 添加 Nginx apt源
-    elif [[ "${ID}" == "ubuntu" && $(echo "${VERSION_ID}" | cut -d '.' -f1) -ge 16 ]]; then
+    elif [[ "${ID}" == "ubuntu" && $(echo "${VERSION_ID}" | cut -d '.' -f1) -ge 20 ]]; then
         echo -e "${OK} ${GreenBG} 当前系统为 Ubuntu ${VERSION_ID} ${UBUNTU_CODENAME} ${Font}"
         INS="apt"
         rm /var/lib/dpkg/lock
@@ -164,7 +164,11 @@ chrony_install() {
 }
 
 dependency_install() {
-    ${INS} install wget git lsof bind9-dnsutils -y
+    if [[ "${ID}" == "centos" ]]; then
+        ${INS} install wget git lsof bind-utils -y
+    else
+        ${INS} install wget git lsof dnsutils -y
+    fi
 
     if [[ "${ID}" == "centos" ]]; then
         ${INS} -y install crontabs
@@ -203,9 +207,9 @@ dependency_install() {
     judge "编译工具包 安装"
 
     if [[ "${ID}" == "centos" ]]; then
-        ${INS} -y install pcre pcre-devel zlib-devel epel-release
+        ${INS} -y install pcre2-devel zlib-devel epel-release
     else
-        ${INS} -y install libpcre3 libpcre3-dev zlib1g-dev dbus
+        ${INS} -y install libpcre2-dev zlib1g-dev dbus
     fi
 
     #    ${INS} -y install rng-tools
@@ -396,12 +400,11 @@ nginx_install() {
         --with-http_sub_module \
         --with-http_gzip_static_module \
         --with-http_stub_status_module \
-        --with-pcre \
+        --with-pcre2 \
         --with-http_realip_module \
         --with-http_flv_module \
         --with-http_mp4_module \
         --with-http_secure_link_module \
-        --with-http_v2_module \
         --with-cc-opt='-O3' \
         --with-ld-opt="-ljemalloc" \
         --with-openssl=../openssl-"$openssl_version"
@@ -446,7 +449,7 @@ domain_check() {
     echo -e "${OK} ${GreenBG} 正在获取 公网ip 信息，请耐心等待 ${Font}"
     wgcfv4_status=$(curl -s4m8 https://www.cloudflare.com/cdn-cgi/trace -k | grep warp | cut -d= -f2)
     wgcfv6_status=$(curl -s6m8 https://www.cloudflare.com/cdn-cgi/trace -k | grep warp | cut -d= -f2)
-    if [[ ${wgcfv4_status} =~ "on"|"plus" ]] || [[ ${wgcfv6_status} =~ "on"|"plus" ]]; then
+    if [[ ${wgcfv4_status} =~ on|plus ]] || [[ ${wgcfv6_status} =~ on|plus ]]; then
         # 关闭wgcf-warp，以防误判VPS IP情况
         wg-quick down wgcf >/dev/null 2>&1
         echo -e "${OK} ${GreenBG} 已关闭 wgcf-warp ${Font}"
@@ -457,7 +460,8 @@ domain_check() {
         echo -e nameserver 2a01:4f8:c2c:123f::1 > /etc/resolv.conf
         echo -e "${OK} ${GreenBG} 识别为 IPv6 Only 的 VPS，自动添加 DNS64 服务器 ${Font}"
     fi
-    echo -e "域名 DNS 解析到的的 IP：${domain_ip}"
+    echo -e "域名 DNS 解析到的 IPv4：${domain_ipv4}"
+    echo -e "域名 DNS 解析到的 IPv6：${domain_ipv6}"
     echo -e "本机IPv4: ${local_ipv4}"
     echo -e "本机IPv6: ${local_ipv6}"
     sleep 2
@@ -500,7 +504,7 @@ port_exist_check() {
 acme() {
     "$HOME"/.acme.sh/acme.sh --set-default-ca --server letsencrypt
 
-    if "$HOME"/.acme.sh/acme.sh --issue --insecure -d "${domain}" --standalone -k ec-256 --force; then
+    if "$HOME"/.acme.sh/acme.sh --issue -d "${domain}" --standalone -k ec-256 --force; then
         echo -e "${OK} ${GreenBG} SSL 证书生成成功 ${Font}"
         sleep 2
         mkdir /data
@@ -566,16 +570,19 @@ nginx_conf_add() {
         ssl_certificate       /data/v2ray.crt;
         ssl_certificate_key   /data/v2ray.key;
         ssl_protocols         TLSv1.3;
-        ssl_ciphers           TLS13-AES-256-GCM-SHA384:TLS13-CHACHA20-POLY1305-SHA256:TLS13-AES-128-GCM-SHA256:TLS13-AES-128-CCM-8-SHA256:TLS13-AES-128-CCM-SHA256:EECDH+CHACHA20:EECDH+CHACHA20-draft:EECDH+ECDSA+AES128:EECDH+aRSA+AES128:RSA+AES128:EECDH+ECDSA+AES256:EECDH+aRSA+AES256:RSA+AES256:EECDH+ECDSA+3DES:EECDH+aRSA+3DES:RSA+3DES:!MD5;
+        ssl_ciphers           TLS13-AES-256-GCM-SHA384:TLS13-CHACHA20-POLY1305-SHA256:TLS13-AES-128-GCM-SHA256:TLS13-AES-128-CCM-8-SHA256:TLS13-AES-128-CCM-SHA256:ECDHE+CHACHA20:ECDHE+ECDSA+AES128:ECDHE+RSA+AES128:RSA+AES128:ECDHE+ECDSA+AES256:ECDHE+RSA+AES256:RSA+AES256:!MD5;
         server_name           serveraddr.com;
         index index.html index.htm;
         root  /home/wwwroot/3DCEList;
         error_page 400 = /400.html;
 
         # Config for 0-RTT in TLSv1.3
+        ssl_session_cache    shared:SSL:10m;
         ssl_early_data on;
         ssl_stapling on;
         ssl_stapling_verify on;
+        resolver             8.8.8.8 1.1.1.1 valid=300s;
+        resolver_timeout     5s;
         add_header Strict-Transport-Security "max-age=31536000";
 
         location /ray/
