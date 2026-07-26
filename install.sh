@@ -862,6 +862,76 @@ ssl_update_manuel() {
     "$HOME"/.acme.sh/acme.sh --installcert -d "${domain}" --fullchainpath /data/v2ray.crt --keypath /data/v2ray.key --ecc
 }
 
+update_dat() {
+    local dat_path='/usr/local/lib/v2ray/'
+
+    if [[ ! -f "${v2ray_bin_dir}" ]] && [[ ! -f "${v2ray_bin_dir_old}/v2ray" ]]; then
+        echo -e "${Error} ${RedBG} V2Ray 未安装，请先安装 V2Ray ${Font}"
+        return 1
+    fi
+
+    local dir_tmp
+    dir_tmp="$(mktemp -d)"
+
+    echo -e "${OK} ${GreenBG} 正在下载 geoip.dat ${Font}"
+    if ! curl -L -q --retry 5 --retry-delay 10 --retry-max-time 60 \
+        -o "${dir_tmp}/geoip.dat" \
+        "https://github.com/v2fly/geoip/releases/latest/download/geoip.dat"; then
+        echo -e "${Error} ${RedBG} geoip.dat 下载失败 ${Font}"
+        rm -rf "${dir_tmp}"
+        return 1
+    fi
+
+    echo -e "${OK} ${GreenBG} 正在下载 geosite.dat ${Font}"
+    if ! curl -L -q --retry 5 --retry-delay 10 --retry-max-time 60 \
+        -o "${dir_tmp}/dlc.dat" \
+        "https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat"; then
+        echo -e "${Error} ${RedBG} geosite.dat 下载失败 ${Font}"
+        rm -rf "${dir_tmp}"
+        return 1
+    fi
+
+    echo -e "${OK} ${GreenBG} 正在验证校验和 ${Font}"
+    if ! curl -L -q --retry 5 --retry-delay 10 --retry-max-time 60 \
+        -o "${dir_tmp}/geoip.dat.sha256sum" \
+        "https://github.com/v2fly/geoip/releases/latest/download/geoip.dat.sha256sum"; then
+        echo -e "${Error} ${RedBG} geoip.dat sha256sum 下载失败 ${Font}"
+        rm -rf "${dir_tmp}"
+        return 1
+    fi
+    if ! curl -L -q --retry 5 --retry-delay 10 --retry-max-time 60 \
+        -o "${dir_tmp}/dlc.dat.sha256sum" \
+        "https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat.sha256sum"; then
+        echo -e "${Error} ${RedBG} geosite.dat sha256sum 下载失败 ${Font}"
+        rm -rf "${dir_tmp}"
+        return 1
+    fi
+
+    (
+        cd "${dir_tmp}" || exit 1
+        if ! sha256sum -c "geoip.dat.sha256sum"; then
+            echo -e "${Error} ${RedBG} geoip.dat 校验失败 ${Font}"
+            exit 1
+        fi
+        if ! sha256sum -c "dlc.dat.sha256sum"; then
+            echo -e "${Error} ${RedBG} geosite.dat 校验失败 ${Font}"
+            exit 1
+        fi
+    ) || {
+        rm -rf "${dir_tmp}"
+        return 1
+    }
+
+    install -d "${dat_path}"
+    systemctl stop v2ray
+    install -m 644 "${dir_tmp}/geoip.dat" "${dat_path}geoip.dat"
+    install -m 644 "${dir_tmp}/dlc.dat" "${dat_path}geosite.dat"
+    systemctl start v2ray
+    judge "geoip.dat geosite.dat 更新"
+
+    rm -rf "${dir_tmp}"
+}
+
 bbr_boost_sh() {
     [ -f "tcp.sh" ] && rm -rf ./tcp.sh
     wget -N --no-check-certificate "https://raw.githubusercontent.com/ylx2016/Linux-NetSpeed/master/tcp.sh" && chmod +x tcp.sh && ./tcp.sh
@@ -1008,6 +1078,9 @@ list() {
     boost)
         bbr_boost_sh
         ;;
+    dat_update)
+        update_dat
+        ;;
     *)
         menu
         ;;
@@ -1048,7 +1121,8 @@ menu() {
     echo -e "${Green}14.${Font} 卸载 V2Ray"
     echo -e "${Green}15.${Font} 更新 证书crontab计划任务"
     echo -e "${Green}16.${Font} 清空 证书遗留文件"
-    echo -e "${Green}17.${Font} 退出 \n"
+    echo -e "${Green}17.${Font} 退出"
+    echo -e "${Green}19.${Font} 更新 geoip.dat 和 geosite.dat \n"
 
     read -rp "请输入数字：" menu_num
     case $menu_num in
@@ -1126,6 +1200,9 @@ menu() {
         read -rp "请输入伪装路径(注意！不需要加斜杠 eg:ray):" camouflage_path
         modify_camouflage_path
         start_process_systemd
+        ;;
+    19)
+        update_dat
         ;;
     *)
         echo -e "${RedBG}请输入正确的数字${Font}"
