@@ -290,8 +290,8 @@ modify_nginx_port() {
     if [[ "on" == "$old_config_status" ]]; then
         port="$(info_extraction '\"port\"')"
     fi
-    sed -i "/ssl http2;$/c \\\tlisten ${port} ssl http2;" ${nginx_conf}
-    sed -i "3c \\\tlisten [::]:${port} http2;" ${nginx_conf}
+    sed -i "/ssl;$/c \\\tlisten ${port} ssl;" ${nginx_conf}
+    sed -i "3c \\\tlisten [::]:${port} ssl;" ${nginx_conf}
     judge "V2ray port 修改"
     [ -f ${v2ray_qr_config_file} ] && sed -i "/\"port\"/c \\  \"port\": \"${port}\"," ${v2ray_qr_config_file}
     echo -e "${OK} ${GreenBG} 端口号:${port} ${Font}"
@@ -628,9 +628,9 @@ old_config_exist_check() {
 nginx_conf_add() {
     touch ${nginx_conf_dir}/v2ray.conf
     cat >${nginx_conf_dir}/v2ray.conf <<EOF
-    server {
-        listen 443 ssl http2;
-        listen [::]:443 http2;
+     server {
+        listen 443 ssl;
+        listen [::]:443 ssl;
         ssl_certificate       /data/v2ray.crt;
         ssl_certificate_key   /data/v2ray.key;
         ssl_protocols         TLSv1.3;
@@ -644,7 +644,7 @@ nginx_conf_add() {
         ssl_session_cache    shared:SSL:10m;
         ssl_early_data on;
         ssl_stapling on;
-        ssl_stapling_verify on;
+        ssl_stapling_verify off;
         resolver             8.8.8.8 1.1.1.1 valid=300s;
         resolver_timeout     5s;
         add_header Strict-Transport-Security "max-age=31536000";
