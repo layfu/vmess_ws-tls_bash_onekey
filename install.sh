@@ -385,7 +385,7 @@ v2ray_update() {
     cd "$tmp_dir" || return 1
 
     echo -e "${OK} ${GreenBG} 正在下载升级脚本... ${Font}"
-    if ! wget -N --no-check-certificate "https://raw.githubusercontent.com/layfu/vmess_ws-tls_bash_onekey/${github_branch}/v2ray.sh"; then
+    if ! wget --no-check-certificate -O v2ray.sh "https://raw.githubusercontent.com/layfu/vmess_ws-tls_bash_onekey/${github_branch}/v2ray.sh?t=$(date +%s)"; then
         echo -e "${Error} ${RedBG} 下载升级脚本失败 ${Font}"
         rm -rf "$tmp_dir"
         return 1
