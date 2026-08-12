@@ -240,7 +240,11 @@ get_version() {
     if [[ -z "$VERSION" ]]; then
         # Determine the version number for V2Ray installed from a local file
         if [[ -f '/usr/local/bin/v2ray' ]]; then
-            VERSION="$(/usr/local/bin/v2ray -version)"
+            if /usr/local/bin/v2ray -version > /dev/null 2>&1; then
+                VERSION="$(/usr/local/bin/v2ray -version)"
+            else
+                VERSION="$(/usr/local/bin/v2ray version)"
+            fi
             CURRENT_VERSION="$(version_number $(echo "$VERSION" | head -n 1 | awk -F ' ' '{print $2}'))"
             if [[ "$LOCAL_INSTALL" -eq '1' ]]; then
                 RELEASE_VERSION="$CURRENT_VERSION"
@@ -314,14 +318,12 @@ download_v2ray() {
     fi
 
     # Verification of V2Ray archive
-    for LISTSUM in 'md5' 'sha1' 'sha256'; do
-        SUM="$(${LISTSUM}sum "$ZIP_FILE" | sed 's/ .*//')"
-        CHECKSUM="$(grep ${LISTSUM^^} "$ZIP_FILE".dgst | grep "$SUM" -o -a | uniq)"
-        if [[ "$SUM" != "$CHECKSUM" ]]; then
-            echo 'error: Check failed! Please check your network or try again.'
-            return 1
-        fi
-    done
+    CHECKSUM=$(awk -F '= ' '/256=/ {print $2}' < "${ZIP_FILE}.dgst")
+    LOCALSUM=$(sha256sum "$ZIP_FILE" | awk '{print $1}')
+    if [[ "$CHECKSUM" != "$LOCALSUM" ]]; then
+        echo 'error: SHA256 check failed! Please check your network or try again.'
+        return 1
+    fi
 }
 
 decompression() {
@@ -543,7 +545,7 @@ main() {
             if [[ "$?" -eq '1' ]]; then
                 rm -r "$TMP_DIRECTORY"
                 echo "removed: $TMP_DIRECTORY"
-                exit 0
+                exit 1
             fi
             install_software unzip
             decompression "$ZIP_FILE"

@@ -392,8 +392,14 @@ v2ray_update() {
     fi
 
     echo -e "${OK} ${GreenBG} 正在升级 V2Ray... ${Font}"
-    bash v2ray.sh --force
-    judge "V2Ray 升级"
+    if bash v2ray.sh --force; then
+        judge "V2Ray 升级"
+    else
+        echo -e "${Error} ${RedBG} V2Ray 升级失败 ${Font}"
+        cd /tmp || true
+        rm -rf "$tmp_dir"
+        return 1
+    fi
 
     cd /tmp || true
     rm -rf "$tmp_dir"
