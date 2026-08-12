@@ -338,6 +338,71 @@ v2ray_install() {
     rm -rf /root/v2ray
 }
 
+v2ray_update() {
+    if [[ ! -f "${v2ray_bin_dir}" ]]; then
+        echo -e "${Error} ${RedBG} V2Ray 未安装，请先安装 V2Ray ${Font}"
+        return 1
+    fi
+
+    local current_ver
+    current_ver="$(${v2ray_bin_dir} version | head -n 1 | awk '{print $2}')"
+    echo -e "${OK} ${GreenBG} 当前 V2Ray 版本: ${current_ver} ${Font}"
+
+    echo -e "${OK} ${GreenBG} 正在检查最新版本... ${Font}"
+    local tmp_file latest_ver
+    tmp_file="$(mktemp)"
+    if ! curl -sS -H "Accept: application/vnd.github.v3+json" -o "$tmp_file" 'https://api.github.com/repos/v2fly/v2ray-core/releases/latest'; then
+        rm -f "$tmp_file"
+        echo -e "${Error} ${RedBG} 获取版本信息失败，请检查网络连接 ${Font}"
+        return 1
+    fi
+    latest_ver="$(sed 'y/,/\n/' "$tmp_file" | grep 'tag_name' | awk -F '"' '{print $4}')"
+    rm -f "$tmp_file"
+
+    if [[ -z "$latest_ver" ]]; then
+        echo -e "${Error} ${RedBG} 获取版本信息失败 ${Font}"
+        return 1
+    fi
+
+    if [[ "${current_ver}" == "${latest_ver}" ]]; then
+        echo -e "${OK} ${GreenBG} 当前已是最新版本 ${latest_ver}，无需升级 ${Font}"
+        return 0
+    fi
+
+    echo -e "${OK} ${GreenBG} 发现新版本: ${latest_ver} (当前: ${current_ver}) ${Font}"
+    read -rp "是否升级? [Y/N]: " update_confirm
+    case $update_confirm in
+        [yY][eE][sS]|[yY])
+            ;;
+        *)
+            echo -e "${OK} ${GreenBG} 已取消升级 ${Font}"
+            return 0
+            ;;
+    esac
+
+    local tmp_dir
+    tmp_dir="$(mktemp -d)"
+    cd "$tmp_dir" || return 1
+
+    echo -e "${OK} ${GreenBG} 正在下载升级脚本... ${Font}"
+    if ! wget -N --no-check-certificate "https://raw.githubusercontent.com/layfu/vmess_ws-tls_bash_onekey/${github_branch}/v2ray.sh"; then
+        echo -e "${Error} ${RedBG} 下载升级脚本失败 ${Font}"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    echo -e "${OK} ${GreenBG} 正在升级 V2Ray... ${Font}"
+    bash v2ray.sh --force
+    judge "V2Ray 升级"
+
+    cd /tmp || true
+    rm -rf "$tmp_dir"
+
+    local new_ver
+    new_ver="$(${v2ray_bin_dir} version | head -n 1 | awk '{print $2}')"
+    echo -e "${OK} ${GreenBG} V2Ray 已升级至 ${new_ver} ${Font}"
+}
+
 nginx_exist_check() {
     if [[ -f "/etc/nginx/sbin/nginx" ]]; then
         echo -e "${OK} ${GreenBG} Nginx已存在，跳过编译安装过程 ${Font}"
@@ -1010,6 +1075,9 @@ list() {
     dat_update)
         update_dat
         ;;
+    v2ray_update)
+        v2ray_update
+        ;;
     *)
         menu
         ;;
@@ -1032,6 +1100,7 @@ menu() {
     echo -e "—————————————— 安装向导 ——————————————"""
     echo -e "${Green}0.${Font}  升级 脚本"
     echo -e "${Green}1.${Font}  安装 V2Ray (Nginx+ws+tls)"
+    echo -e "${Green}2.${Font}  升级 V2Ray"
     echo -e "—————————————— 配置变更 ——————————————"
     echo -e "${Green}4.${Font}  变更 UUID"
     echo -e "${Green}5.${Font}  变更 port"
@@ -1057,6 +1126,9 @@ menu() {
     1)
         shell_mode="ws"
         install_v2ray_ws_tls
+        ;;
+    2)
+        v2ray_update
         ;;
     3)
         bash <(curl -L -s https://raw.githubusercontent.com/layfu/vmess_ws-tls_bash_onekey/${github_branch}/v2ray.sh)
