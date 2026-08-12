@@ -643,8 +643,6 @@ nginx_conf_add() {
         # Config for 0-RTT in TLSv1.3
         ssl_session_cache    shared:SSL:10m;
         ssl_early_data on;
-        ssl_stapling on;
-        ssl_stapling_verify off;
         resolver             8.8.8.8 1.1.1.1 valid=300s;
         resolver_timeout     5s;
         add_header Strict-Transport-Security "max-age=31536000";
