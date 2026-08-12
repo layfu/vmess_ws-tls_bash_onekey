@@ -364,6 +364,9 @@ v2ray_update() {
         return 1
     fi
 
+    latest_ver="${latest_ver#v}"
+    current_ver="${current_ver#v}"
+
     if [[ "${current_ver}" == "${latest_ver}" ]]; then
         echo -e "${OK} ${GreenBG} 当前已是最新版本 ${latest_ver}，无需升级 ${Font}"
         return 0
