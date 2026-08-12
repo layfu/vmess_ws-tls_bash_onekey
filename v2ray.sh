@@ -240,10 +240,10 @@ get_version() {
     if [[ -z "$VERSION" ]]; then
         # Determine the version number for V2Ray installed from a local file
         if [[ -f '/usr/local/bin/v2ray' ]]; then
-            if /usr/local/bin/v2ray -version > /dev/null 2>&1; then
-                VERSION="$(/usr/local/bin/v2ray -version)"
+            if /usr/local/bin/v2ray -version &>/dev/null; then
+                VERSION="$(/usr/local/bin/v2ray -version 2>/dev/null)"
             else
-                VERSION="$(/usr/local/bin/v2ray version)"
+                VERSION="$(/usr/local/bin/v2ray version 2>/dev/null)"
             fi
             CURRENT_VERSION="$(version_number $(echo "$VERSION" | head -n 1 | awk -F ' ' '{print $2}'))"
             if [[ "$LOCAL_INSTALL" -eq '1' ]]; then
@@ -348,7 +348,13 @@ install_file() {
 install_v2ray() {
     # Install V2Ray binary to /usr/local/bin/ and $DAT_PATH
     install_file v2ray
-    install_file v2ctl
+    if [[ -f "${TMP_DIRECTORY}v2ctl" ]]; then
+        install_file v2ctl
+    else
+        if [[ -f '/usr/local/bin/v2ctl' ]]; then
+            rm '/usr/local/bin/v2ctl'
+        fi
+    fi
     install -d "$DAT_PATH"
     # If the file exists, geoip.dat and geosite.dat will not be installed or updated
     if [[ ! -f "${DAT_PATH}.undat" ]]; then
