@@ -31,7 +31,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.5.1.0"
+shell_version="1.5.1.1"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -1482,9 +1482,8 @@ section_title() {
 
 menu() {
     update_sh
-    echo -e "\t V2ray 安装管理脚本 ${Red}[${shell_version}]${Font}"
-    echo -e "\t---authored by wulabing---"
-    echo -e "\thttps://github.com/wulabing\n"
+    echo -e "\t V2Ray / AnyTLS 安装管理脚本 ${Red}[${shell_version}]${Font}"
+    echo -e "\tfork 自 wulabing/V2Ray_ws-tls_bash_onekey\n"
     echo -e "当前已安装版本:${shell_mode}\n"
 
     echo -e "${Green}0.${Font}  升级 脚本"
