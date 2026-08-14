@@ -31,7 +31,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.5.1.3"
+shell_version="1.5.1.4"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -1290,16 +1290,33 @@ update_dat() {
 }
 
 uninstall_all() {
-    stop_process_systemd
-    [[ -f $v2ray_systemd_file ]] && rm -f $v2ray_systemd_file
-    [[ -f $v2ray_bin_dir ]] && rm -f $v2ray_bin_dir
-    [[ -f $v2ctl_bin_dir ]] && rm -f $v2ctl_bin_dir
-    [[ -d $v2ray_bin_dir_old ]] && rm -rf $v2ray_bin_dir_old
+    if [[ -f $v2ray_bin_dir || -d $v2ray_bin_dir_old || -f $v2ray_systemd_file ]]; then
+        echo -e "${OK} ${Green} 是否卸载 V2Ray [Y/N]? ${Font}"
+        read -r uninstall_v2ray
+        case $uninstall_v2ray in
+        [yY][eE][sS] | [yY])
+            systemctl disable v2ray >/dev/null 2>&1
+            systemctl stop v2ray >/dev/null 2>&1
+            rm -f $v2ray_systemd_file
+            rm -f $v2ray_bin_dir
+            rm -f $v2ctl_bin_dir
+            rm -rf $v2ray_bin_dir_old
+            rm -rf $v2ray_conf_dir
+            rm -rf $web_dir
+            rm -f $v2ray_qr_config_file
+            echo -e "${OK} ${Green} 已卸载 V2Ray ${Font}"
+            ;;
+        *) ;;
+
+        esac
+    fi
     if [[ -d $nginx_dir ]]; then
         echo -e "${OK} ${Green} 是否卸载 Nginx [Y/N]? ${Font}"
         read -r uninstall_nginx
         case $uninstall_nginx in
         [yY][eE][sS] | [yY])
+            systemctl disable nginx >/dev/null 2>&1
+            systemctl stop nginx >/dev/null 2>&1
             rm -rf $nginx_dir
             rm -rf $nginx_systemd_file
             echo -e "${OK} ${Green} 已卸载 Nginx ${Font}"
@@ -1308,8 +1325,6 @@ uninstall_all() {
 
         esac
     fi
-    [[ -d $v2ray_conf_dir ]] && rm -rf $v2ray_conf_dir
-    [[ -d $web_dir ]] && rm -rf $web_dir
     if [[ -f ${singbox_bin_dir} || -d ${singbox_conf_dir} || -f ${singbox_systemd_file} ]]; then
         echo -e "${OK} ${Green} 是否卸载 sing-box (AnyTLS) [Y/N]? ${Font}"
         read -r uninstall_singbox
@@ -1541,7 +1556,7 @@ menu() {
 
     section_title "其他"
     echo -e ""
-    echo -e "${Green}19.${Font} 卸载 V2Ray"
+    echo -e "${Green}19.${Font} 卸载"
     echo -e "${Green}20.${Font} 更新 geoip.dat 和 geosite.dat"
     echo -e "${Green}21.${Font} 退出 \n"
 
