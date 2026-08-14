@@ -31,7 +31,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.0.3"
+shell_version="1.6.0.4"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -200,9 +200,6 @@ dependency_install() {
 
     ${INS} -y install unzip
     judge "安装 unzip"
-
-    ${INS} -y install qrencode
-    judge "安装 qrencode"
 
     ${INS} -y install curl
     judge "安装 curl"
@@ -1195,63 +1192,31 @@ vmess_qr_config_tls_ws() {
 EOF
 }
 
-vmess_qr_link_image() {
-    vmess_link="vmess://$(base64 -w 0 $v2ray_qr_config_file)"
-    {
-        echo -e "$Red 二维码: $Font"
-        echo -n "${vmess_link}" | qrencode -o - -t utf8
-        echo -e "${Red} URL导入链接:${vmess_link} ${Font}"
-    } >>"${v2ray_info_file}"
-}
-
-vmess_quan_link_image() {
-    echo "$(info_extraction '\"ps\"') = vmess, $(info_extraction '\"add\"'), \
-    $(info_extraction '\"port\"'), chacha20-ietf-poly1305, "\"$(info_extraction '\"id\"')\"", over-tls=true, \
-    certificate=1, obfs=ws, obfs-path="\"$(info_extraction '\"path\"')\"", " > /tmp/vmess_quan.tmp
-    vmess_link="vmess://$(base64 -w 0 /tmp/vmess_quan.tmp)"
-    {
-        echo -e "$Red 二维码: $Font"
-        echo -n "${vmess_link}" | qrencode -o - -t utf8
-        echo -e "${Red} URL导入链接:${vmess_link} ${Font}"
-    } >>"${v2ray_info_file}"
-}
-
-vmess_link_image_choice() {
-        echo "请选择生成的链接种类"
-        echo "1: V2RayNG/V2RayN"
-        echo "2: quantumult"
-        read -rp "请输入：" link_version
-        [[ -z ${link_version} ]] && link_version=1
-        if [[ $link_version == 1 ]]; then
-            vmess_qr_link_image
-        elif [[ $link_version == 2 ]]; then
-            vmess_quan_link_image
-        else
-            vmess_qr_link_image
-        fi
-}
-
 info_extraction() {
     grep "$1" $v2ray_qr_config_file | awk -F '"' '{print $4}'
 }
 
-basic_information() {
+v2ray_config_output() {
+    if [[ ! -f ${v2ray_qr_config_file} ]]; then
+        echo -e "${Error} ${RedBG} V2Ray 未安装，请先安装 ${Font}"
+        return 1
+    fi
+    local vmess_link
+    vmess_link="vmess://$(base64 -w 0 ${v2ray_qr_config_file})"
     {
-        echo -e "${OK} ${GreenBG} V2ray+ws+tls 安装成功"
-        echo -e "${Red} V2ray 配置信息 ${Font}"
-        echo -e "${Red} 地址（address）:${Font} $(info_extraction '\"add\"') "
-        echo -e "${Red} 端口（port）：${Font} $(info_extraction '\"port\"') "
+        echo -e "${OK} ${GreenBG} V2Ray 配置信息 ${Font}"
+        echo -e "${Red} 地址（address）:${Font} $(info_extraction '\"add\"')"
+        echo -e "${Red} 端口（port）：${Font} $(info_extraction '\"port\"')"
         echo -e "${Red} 用户id（UUID）：${Font} $(info_extraction '\"id\"')"
         echo -e "${Red} 额外id（alterId）：${Font} $(info_extraction '\"aid\"')"
-        echo -e "${Red} 加密方式（security）：${Font} 自适应 "
-        echo -e "${Red} 传输协议（network）：${Font} $(info_extraction '\"net\"') "
-        echo -e "${Red} 伪装类型（type）：${Font} none "
-        echo -e "${Red} 路径（不要落下/）：${Font} $(info_extraction '\"path\"') "
-        echo -e "${Red} 底层传输安全：${Font} tls "
+        echo -e "${Red} 传输协议（network）：${Font} $(info_extraction '\"net\"')"
+        echo -e "${Red} 路径（path）：${Font} $(info_extraction '\"path\"')"
+        echo -e "${Red} 底层传输安全（tls）：${Font} tls"
+        echo -e ""
+        echo -e "${Red} 导入链接 ${Font}"
+        echo -e "${vmess_link}"
     } >"${v2ray_info_file}"
-}
 
-show_information() {
     cat "${v2ray_info_file}"
 }
 
@@ -1534,10 +1499,8 @@ install_v2ray_ws_tls() {
     ssl_judge_and_install
     nginx_systemd
     vmess_qr_config_tls_ws
-    basic_information
-    vmess_link_image_choice
     tls_type
-    show_information
+    v2ray_config_output
     start_process_systemd
     enable_process_systemd
     acme_cron_update
@@ -1804,13 +1767,7 @@ view_menu() {
         read -rp "请输入数字：" sub_num
         case ${sub_num} in
         1)
-            basic_information
-            if [[ $shell_mode == "ws" ]]; then
-                vmess_link_image_choice
-            else
-                vmess_qr_link_image
-            fi
-            show_information
+            v2ray_config_output
             ;;
         2)
             surge_config_output
