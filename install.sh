@@ -31,7 +31,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.5.1.4"
+shell_version="1.6.0.0"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -57,8 +57,8 @@ singbox_conf="${singbox_conf_dir}/config.json"
 singbox_systemd_file="/etc/systemd/system/sing-box.service"
 anytls_info_file="$HOME/anytls_info.inf"
 anytls_domain_file="/etc/sing-box/domain"
+anytls_users_file="/etc/sing-box/users"
 anytls_port=""
-anytls_password=""
 amce_sh_file="/root/.acme.sh/acme.sh"
 ssl_update_file="/usr/bin/ssl_update.sh"
 nginx_version="1.30.4"
@@ -610,11 +610,158 @@ anytls_port_set() {
     [[ -z ${anytls_port} ]] && anytls_port="8443"
 }
 
-anytls_password_set() {
-    anytls_password="$(head -c 16 /dev/urandom | md5sum | head -c 16)"
+anytls_gen_password() {
+    head -c 16 /dev/urandom | md5sum | head -c 16
+}
+
+anytls_users_ensure() {
+    if [[ ! -f "${anytls_users_file}" ]]; then
+        mkdir -p "${singbox_conf_dir}"
+        local existing_pass=""
+        if [[ -f "${singbox_conf}" ]]; then
+            existing_pass="$(grep '\"password\"' "${singbox_conf}" | awk -F '"' '{print $4}' | head -1)"
+        fi
+        [[ -z "${existing_pass}" ]] && existing_pass="$(anytls_gen_password)"
+        echo "anytls ${existing_pass}" >"${anytls_users_file}"
+    fi
+}
+
+anytls_user_list() {
+    anytls_users_ensure
+    echo -e "${OK} ${GreenBG} 当前 AnyTLS 用户列表 ${Font}"
+    local idx=0
+    while read -r name password; do
+        [[ -z "${name}" ]] && continue
+        idx=$((idx + 1))
+        echo -e "${Green}${idx}.${Font} 名称: ${name}   密码: ${password}"
+    done <"${anytls_users_file}"
+}
+
+anytls_user_add() {
+    if [[ ! -f "${singbox_conf}" ]]; then
+        echo -e "${Error} ${RedBG} AnyTLS 未安装，请先安装 ${Font}"
+        return 1
+    fi
+    anytls_users_ensure
+    local next_num=1
+    while grep -q "^user${next_num} " "${anytls_users_file}"; do
+        next_num=$((next_num + 1))
+    done
+    read -rp "请输入用户名（default:user${next_num}）:" user_name
+    [[ -z "${user_name}" ]] && user_name="user${next_num}"
+    if [[ "${user_name}" =~ [[:space:]] ]]; then
+        echo -e "${Error} ${RedBG} 用户名不能包含空格 ${Font}"
+        return 1
+    fi
+    if grep -q "^${user_name} " "${anytls_users_file}"; then
+        echo -e "${Error} ${RedBG} 用户 ${user_name} 已存在 ${Font}"
+        return 1
+    fi
+    echo "${user_name} $(anytls_gen_password)" >>"${anytls_users_file}"
+    anytls_conf_add
+    systemctl restart sing-box
+    judge "AnyTLS 用户添加"
+    surge_config_output
+}
+
+anytls_user_del() {
+    if [[ ! -f "${singbox_conf}" ]]; then
+        echo -e "${Error} ${RedBG} AnyTLS 未安装，请先安装 ${Font}"
+        return 1
+    fi
+    anytls_users_ensure
+    anytls_user_list
+    local count
+    count="$(wc -l <"${anytls_users_file}")"
+    if [[ "${count}" -le 1 ]]; then
+        echo -e "${Error} ${RedBG} 至少保留一个用户，无法删除 ${Font}"
+        return 1
+    fi
+    read -rp "请输入要删除的用户名:" del_name
+    [[ -z "${del_name}" ]] && return 1
+    if ! grep -q "^${del_name} " "${anytls_users_file}"; then
+        echo -e "${Error} ${RedBG} 用户 ${del_name} 不存在 ${Font}"
+        return 1
+    fi
+    sed -i "/^${del_name} /d" "${anytls_users_file}"
+    anytls_conf_add
+    systemctl restart sing-box
+    judge "AnyTLS 用户删除"
+    surge_config_output
+}
+
+anytls_user_password() {
+    if [[ ! -f "${singbox_conf}" ]]; then
+        echo -e "${Error} ${RedBG} AnyTLS 未安装，请先安装 ${Font}"
+        return 1
+    fi
+    anytls_users_ensure
+    anytls_user_list
+    read -rp "请输入要修改密码的用户名:" chg_name
+    [[ -z "${chg_name}" ]] && return 1
+    if ! grep -q "^${chg_name} " "${anytls_users_file}"; then
+        echo -e "${Error} ${RedBG} 用户 ${chg_name} 不存在 ${Font}"
+        return 1
+    fi
+    sed -i "s/^${chg_name} .*/${chg_name} $(anytls_gen_password)/" "${anytls_users_file}"
+    anytls_conf_add
+    systemctl restart sing-box
+    judge "AnyTLS 用户密码变更"
+    surge_config_output
+}
+
+anytls_user_menu() {
+    if [[ ! -f "${singbox_conf}" ]]; then
+        echo -e "${Error} ${RedBG} AnyTLS 未安装，请先安装 ${Font}"
+        return 1
+    fi
+    while true; do
+        echo -e "\t AnyTLS 用户管理"
+        echo -e "${Green}1.${Font} 查看用户列表"
+        echo -e "${Green}2.${Font} 添加用户"
+        echo -e "${Green}3.${Font} 删除用户"
+        echo -e "${Green}4.${Font} 修改用户密码"
+        echo -e "${Green}5.${Font} 返回上级菜单 \n"
+        read -rp "请输入数字：" user_menu_num
+        case ${user_menu_num} in
+        1)
+            anytls_user_list
+            ;;
+        2)
+            anytls_user_add
+            ;;
+        3)
+            anytls_user_del
+            ;;
+        4)
+            anytls_user_password
+            ;;
+        5)
+            break
+            ;;
+        *)
+            echo -e "${RedBG}请输入正确的数字${Font}"
+            ;;
+        esac
+    done
 }
 
 anytls_conf_add() {
+    anytls_users_ensure
+    local users_json="" name password first=1
+    while read -r name password; do
+        [[ -z "${name}" ]] && continue
+        if [[ ${first} -eq 1 ]]; then
+            first=0
+        else
+            users_json="${users_json},"
+        fi
+        users_json="${users_json}{\"name\":\"${name}\",\"password\":\"${password}\"}"
+    done <"${anytls_users_file}"
+
+    [[ -z "${anytls_port}" ]] && anytls_port="$(grep '\"listen_port\"' "${singbox_conf}" 2>/dev/null | awk -F ':' '{print $2}' | tr -d ' ,')"
+    [[ -z "${anytls_port}" ]] && anytls_port="8443"
+
     cat >${singbox_conf} <<EOF
 {
   "log": {
@@ -628,10 +775,7 @@ anytls_conf_add() {
       "listen": "::",
       "listen_port": ${anytls_port},
       "users": [
-        {
-          "name": "anytls",
-          "password": "${anytls_password}"
-        }
+        ${users_json}
       ],
       "tls": {
         "enabled": true,
@@ -663,12 +807,8 @@ surge_config_output() {
         echo -e "${Error} ${RedBG} AnyTLS 未安装，请先安装 ${Font}"
         return 1
     fi
-    if [[ -z "${anytls_port}" ]] && [[ -f "${singbox_conf}" ]]; then
-        anytls_port="$(grep '\"listen_port\"' ${singbox_conf} | awk -F ':' '{print $2}' | tr -d ' ,')"
-    fi
-    if [[ -z "${anytls_password}" ]] && [[ -f "${singbox_conf}" ]]; then
-        anytls_password="$(grep '\"password\"' ${singbox_conf} | awk -F '"' '{print $4}')"
-    fi
+    anytls_users_ensure
+    [[ -z "${anytls_port}" ]] && anytls_port="$(grep '\"listen_port\"' "${singbox_conf}" | awk -F ':' '{print $2}' | tr -d ' ,')"
     local domain=""
     [[ -f "${anytls_domain_file}" ]] && domain="$(cat ${anytls_domain_file})"
     [[ -z "${domain}" && -f "${v2ray_qr_config_file}" ]] && domain="$(grep '\"add\"' ${v2ray_qr_config_file} | awk -F '"' '{print $4}')"
@@ -678,31 +818,23 @@ surge_config_output() {
         echo -e "${Red} AnyTLS 配置信息 ${Font}"
         echo -e "${Red} 地址（address）:${Font} ${domain}"
         echo -e "${Red} 端口（port）：${Font} ${anytls_port}"
-        echo -e "${Red} 密码（password）：${Font} ${anytls_password}"
         echo -e "${Red} SNI：${Font} ${domain}"
         echo -e ""
         echo -e "${Red} Surge 配置（iOS 5.17.0+ / Mac 6.4.3+）${Font}"
         echo -e "[Proxy]"
-        echo -e "AnyTLS = anytls, ${domain}, ${anytls_port}, password=${anytls_password}, sni=${domain}, reuse=true"
+        while read -r name password; do
+            [[ -z "${name}" ]] && continue
+            echo -e "AnyTLS-${name} = anytls, ${domain}, ${anytls_port}, password=${password}, sni=${domain}, reuse=true"
+        done <"${anytls_users_file}"
         echo -e ""
         echo -e "${Red} 其他客户端 URI ${Font}"
-        echo -e "anytls://${anytls_password}@${domain}:${anytls_port}?sni=${domain}#AnyTLS-${domain}"
+        while read -r name password; do
+            [[ -z "${name}" ]] && continue
+            echo -e "anytls://${password}@${domain}:${anytls_port}?sni=${domain}#AnyTLS-${name}"
+        done <"${anytls_users_file}"
     } >"${anytls_info_file}"
 
     cat "${anytls_info_file}"
-}
-
-anytls_password_change() {
-    if [[ ! -f ${singbox_conf} ]]; then
-        echo -e "${Error} ${RedBG} AnyTLS 未安装，请先安装 ${Font}"
-        return 1
-    fi
-    anytls_port="$(grep '\"listen_port\"' ${singbox_conf} | awk -F ':' '{print $2}' | tr -d ' ,')"
-    anytls_password_set
-    anytls_conf_add
-    systemctl restart sing-box
-    judge "AnyTLS 密码变更"
-    surge_config_output
 }
 
 anytls_port_change() {
@@ -710,7 +842,6 @@ anytls_port_change() {
         echo -e "${Error} ${RedBG} AnyTLS 未安装，请先安装 ${Font}"
         return 1
     fi
-    anytls_password="$(grep '\"password\"' ${singbox_conf} | awk -F '"' '{print $4}')"
     read -rp "请输入新的 AnyTLS 端口:" anytls_port
     port_exist_check "${anytls_port}"
     anytls_conf_add
@@ -1411,10 +1542,12 @@ install_anytls() {
     mkdir -p ${singbox_conf_dir}
     echo "$domain" >${anytls_domain_file}
     anytls_port_set
-    anytls_password_set
     port_exist_check "${anytls_port}"
     singbox_install
     ssl_judge_and_install
+    read -rp "请输入首个用户名（default:anytls）:" first_user
+    [[ -z "${first_user}" ]] && first_user="anytls"
+    echo "${first_user} $(anytls_gen_password)" >${anytls_users_file}
     anytls_conf_add
     systemctl restart sing-box
     judge "sing-box 启动"
@@ -1534,7 +1667,7 @@ menu() {
 
     section_title "AnyTLS 配置"
     echo -e ""
-    echo -e "${Green}9.${Font}  变更 AnyTLS 密码"
+    echo -e "${Green}9.${Font}  管理 AnyTLS 用户"
     echo -e "${Green}10.${Font} 变更 AnyTLS 端口"
     echo -e ""
 
@@ -1599,7 +1732,7 @@ menu() {
         start_process_systemd
         ;;
     9)
-        anytls_password_change
+        anytls_user_menu
         ;;
     10)
         anytls_port_change

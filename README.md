@@ -37,6 +37,7 @@ wget -N --no-check-certificate -q -O install.sh "https://raw.githubusercontent.c
 - 独立监听端口（默认 8443，与 Nginx 的 443 互不冲突）
 - 复用 `/data/v2ray.crt` `/data/v2ray.key` 证书（**不自签证书**）
 - 证书续签后 sing-box 会自动热加载，无需额外操作
+- 支持多用户：菜单 `9` 进入用户管理（查看/添加/删除/改密码）
 - 安装信息保存在 `~/anytls_info.inf`，包含 Surge 配置行与 `anytls://` URI
 
 Surge 配置示例（iOS 5.17.0+ / Mac 6.4.3+）：
