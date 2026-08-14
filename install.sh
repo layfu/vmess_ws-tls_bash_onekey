@@ -31,7 +31,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.5.1.2"
+shell_version="1.5.1.3"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -618,7 +618,7 @@ anytls_conf_add() {
     cat >${singbox_conf} <<EOF
 {
   "log": {
-    "level": "warn",
+    "level": "info",
     "timestamp": true
   },
   "inbounds": [
@@ -1208,6 +1208,11 @@ show_error_log() {
     [ -f ${v2ray_error_log} ] && tail -f ${v2ray_error_log} || echo -e "${RedBG}log文件不存在${Font}"
 }
 
+show_singbox_log() {
+    [[ -f ${singbox_conf} ]] || { echo -e "${Error} ${RedBG} AnyTLS 未安装，请先安装 ${Font}"; return 1; }
+    journalctl -u sing-box --output cat -f
+}
+
 ssl_update_manuel() {
     [ -f ${amce_sh_file} ] && "/root/.acme.sh"/acme.sh --cron --home "/root/.acme.sh" || echo -e "${RedBG}证书签发工具不存在，请确认你是否使用了自己的证书${Font}"
     domain="$(info_extraction '\"add\"')"
@@ -1522,22 +1527,23 @@ menu() {
     echo -e ""
     echo -e "${Green}11.${Font} 查看 V2Ray 配置信息"
     echo -e "${Green}12.${Font} 查看 AnyTLS 配置信息"
-    echo -e "${Green}13.${Font} 查看 实时访问日志"
-    echo -e "${Green}14.${Font} 查看 实时错误日志"
+    echo -e "${Green}13.${Font} 查看 V2Ray 实时访问日志"
+    echo -e "${Green}14.${Font} 查看 V2Ray 实时错误日志"
+    echo -e "${Green}15.${Font} 查看 AnyTLS 实时日志"
     echo -e ""
 
     section_title "证书"
     echo -e ""
-    echo -e "${Green}15.${Font} 证书 有效期更新"
-    echo -e "${Green}16.${Font} 更新 证书crontab计划任务"
-    echo -e "${Green}17.${Font} 清空 证书遗留文件"
+    echo -e "${Green}16.${Font} 证书 有效期更新"
+    echo -e "${Green}17.${Font} 更新 证书crontab计划任务"
+    echo -e "${Green}18.${Font} 清空 证书遗留文件"
     echo -e ""
 
     section_title "其他"
     echo -e ""
-    echo -e "${Green}18.${Font} 卸载 V2Ray"
-    echo -e "${Green}19.${Font} 更新 geoip.dat 和 geosite.dat"
-    echo -e "${Green}20.${Font} 退出 \n"
+    echo -e "${Green}19.${Font} 卸载 V2Ray"
+    echo -e "${Green}20.${Font} 更新 geoip.dat 和 geosite.dat"
+    echo -e "${Green}21.${Font} 退出 \n"
 
     read -rp "请输入数字：" menu_num
     case $menu_num in
@@ -1602,24 +1608,27 @@ menu() {
         show_error_log
         ;;
     15)
+        show_singbox_log
+        ;;
+    16)
         stop_process_systemd
         ssl_update_manuel
         start_process_systemd
         ;;
-    16)
+    17)
         acme_cron_update
         ;;
-    17)
+    18)
         delete_tls_key_and_crt
         ;;
-    18)
+    19)
         source '/etc/os-release'
         uninstall_all
         ;;
-    19)
+    20)
         update_dat
         ;;
-    20)
+    21)
         exit 0
         ;;
     *)
