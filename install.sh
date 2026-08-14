@@ -31,7 +31,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.0.2"
+shell_version="1.6.0.3"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -1421,6 +1421,7 @@ update_dat() {
 }
 
 uninstall_all() {
+    local uninstalled_any=0
     if [[ -f $v2ray_bin_dir || -d $v2ray_bin_dir_old || -f $v2ray_systemd_file ]]; then
         echo -e "${OK} ${Green} 是否卸载 V2Ray [Y/N]? ${Font}"
         read -r uninstall_v2ray
@@ -1435,6 +1436,7 @@ uninstall_all() {
             rm -rf $v2ray_conf_dir
             rm -rf $web_dir
             rm -f $v2ray_qr_config_file
+            uninstalled_any=1
             echo -e "${OK} ${Green} 已卸载 V2Ray ${Font}"
             ;;
         *) ;;
@@ -1450,6 +1452,7 @@ uninstall_all() {
             systemctl stop nginx >/dev/null 2>&1
             rm -rf $nginx_dir
             rm -rf $nginx_systemd_file
+            uninstalled_any=1
             echo -e "${OK} ${Green} 已卸载 Nginx ${Font}"
             ;;
         *) ;;
@@ -1467,6 +1470,7 @@ uninstall_all() {
             rm -f ${singbox_bin_dir}
             rm -rf ${singbox_conf_dir}
             rm -f ${anytls_info_file}
+            uninstalled_any=1
             echo -e "${OK} ${Green} 已卸载 sing-box (AnyTLS) ${Font}"
             ;;
         *) ;;
@@ -1480,11 +1484,16 @@ uninstall_all() {
       /root/.acme.sh/acme.sh --uninstall
       rm -rf /root/.acme.sh
       rm -rf /data/v2ray.crt /data/v2ray.key
+      uninstalled_any=1
       ;;
     *) ;;
     esac
     systemctl daemon-reload
-    echo -e "${OK} ${GreenBG} 已卸载 ${Font}"
+    if [[ "${uninstalled_any}" -eq 1 ]]; then
+        echo -e "${OK} ${GreenBG} 已卸载 ${Font}"
+    else
+        echo -e "${OK} ${GreenBG} 未卸载任何组件 ${Font}"
+    fi
 }
 delete_tls_key_and_crt() {
     [[ -f $HOME/.acme.sh/acme.sh ]] && /root/.acme.sh/acme.sh uninstall >/dev/null 2>&1
