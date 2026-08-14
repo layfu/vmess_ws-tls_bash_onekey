@@ -31,7 +31,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.0.0"
+shell_version="1.6.0.1"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -1635,16 +1635,18 @@ section_title() {
 
 menu() {
     update_sh
-    echo -e "\t V2Ray / AnyTLS 安装管理脚本 ${Red}[${shell_version}]${Font}"
-    echo -e "\tfork 自 wulabing/V2Ray_ws-tls_bash_onekey\n"
-    local mode_display="${shell_mode}"
-    case "${shell_mode}" in
-        "None") mode_display="未安装" ;;
-        "ws") mode_display="V2Ray (vmess+ws+tls)" ;;
-        "anytls") mode_display="AnyTLS" ;;
-        "ws+anytls") mode_display="V2Ray (vmess+ws+tls) + AnyTLS" ;;
-    esac
-    echo -e "当前已安装协议:${mode_display}\n"
+    while true; do
+        judge_mode
+        echo -e "\t V2Ray / AnyTLS 安装管理脚本 ${Red}[${shell_version}]${Font}"
+        echo -e "\tfork 自 wulabing/V2Ray_ws-tls_bash_onekey\n"
+        local mode_display="${shell_mode}"
+        case "${shell_mode}" in
+            "None") mode_display="未安装" ;;
+            "ws") mode_display="V2Ray (vmess+ws+tls)" ;;
+            "anytls") mode_display="AnyTLS" ;;
+            "ws+anytls") mode_display="V2Ray (vmess+ws+tls) + AnyTLS" ;;
+        esac
+        echo -e "当前已安装协议:${mode_display}\n"
 
     echo -e "${Green}0.${Font}  升级 脚本"
     echo -e ""
@@ -1783,6 +1785,7 @@ menu() {
         echo -e "${RedBG}请输入正确的数字${Font}"
         ;;
     esac
+    done
 }
 
 judge_mode
