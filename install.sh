@@ -659,6 +659,10 @@ EOF
 }
 
 surge_config_output() {
+    if [[ ! -f "${singbox_conf}" ]]; then
+        echo -e "${Error} ${RedBG} AnyTLS 未安装，请先安装 ${Font}"
+        return 1
+    fi
     if [[ -z "${anytls_port}" ]] && [[ -f "${singbox_conf}" ]]; then
         anytls_port="$(grep '\"listen_port\"' ${singbox_conf} | awk -F ':' '{print $2}' | tr -d ' ,')"
     fi
