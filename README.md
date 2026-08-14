@@ -32,12 +32,12 @@ wget -N --no-check-certificate -q -O install.sh "https://raw.githubusercontent.c
 
 ### AnyTLS 安装
 
-进入管理菜单后选择 `3` 安装 AnyTLS（基于 [sing-box](https://sing-box.sagernet.org/)）：
+进入管理菜单后选择 `1 安装与升级` → `3 安装 AnyTLS`（基于 [sing-box](https://sing-box.sagernet.org/)）：
 
 - 独立监听端口（默认 8443，与 Nginx 的 443 互不冲突）
 - 复用 `/data/v2ray.crt` `/data/v2ray.key` 证书（**不自签证书**）
 - 证书续签后 sing-box 会自动热加载，无需额外操作
-- 支持多用户：菜单 `9` 进入用户管理（查看/添加/删除/改密码）
+- 支持多用户：`3 AnyTLS 配置` → `1 管理 AnyTLS 用户`（查看/添加/删除/改密码）
 - 安装信息保存在 `~/anytls_info.inf`，包含 Surge 配置行与 `anytls://` URI
 
 Surge 配置示例（iOS 5.17.0+ / Mac 6.4.3+）：

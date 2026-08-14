@@ -31,7 +31,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.0.1"
+shell_version="1.6.0.2"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -1633,158 +1633,254 @@ section_title() {
     echo -e "${pad_l} ${title} ${pad_r}"
 }
 
+show_header() {
+    judge_mode
+    local mode_display="${shell_mode}"
+    case "${shell_mode}" in
+        "None") mode_display="未安装" ;;
+        "ws") mode_display="V2Ray (vmess+ws+tls)" ;;
+        "anytls") mode_display="AnyTLS" ;;
+        "ws+anytls") mode_display="V2Ray (vmess+ws+tls) + AnyTLS" ;;
+    esac
+    echo -e "V2Ray / AnyTLS 安装管理脚本 ${Red}[${shell_version}]${Font}   当前已安装: ${mode_display}\n"
+}
+
 menu() {
     update_sh
     while true; do
-        judge_mode
-        echo -e "\t V2Ray / AnyTLS 安装管理脚本 ${Red}[${shell_version}]${Font}"
-        echo -e "\tfork 自 wulabing/V2Ray_ws-tls_bash_onekey\n"
-        local mode_display="${shell_mode}"
-        case "${shell_mode}" in
-            "None") mode_display="未安装" ;;
-            "ws") mode_display="V2Ray (vmess+ws+tls)" ;;
-            "anytls") mode_display="AnyTLS" ;;
-            "ws+anytls") mode_display="V2Ray (vmess+ws+tls) + AnyTLS" ;;
+        show_header
+        echo -e "${Green}1.${Font} 安装与升级"
+        echo -e "${Green}2.${Font} V2Ray 配置"
+        echo -e "${Green}3.${Font} AnyTLS 配置"
+        echo -e "${Green}4.${Font} 查看信息"
+        echo -e "${Green}5.${Font} 证书"
+        echo -e "${Green}6.${Font} 其他"
+        echo -e "${Green}0.${Font} 退出 \n"
+        read -rp "请输入数字：" menu_num
+        case ${menu_num} in
+        1)
+            install_menu
+            ;;
+        2)
+            v2ray_config_menu
+            ;;
+        3)
+            anytls_config_menu
+            ;;
+        4)
+            view_menu
+            ;;
+        5)
+            cert_menu
+            ;;
+        6)
+            other_menu
+            ;;
+        0)
+            exit 0
+            ;;
+        *)
+            echo -e "${RedBG}请输入正确的数字${Font}"
+            ;;
         esac
-        echo -e "当前已安装协议:${mode_display}\n"
+    done
+}
 
-    echo -e "${Green}0.${Font}  升级 脚本"
-    echo -e ""
+install_menu() {
+    while true; do
+        section_title "安装与升级"
+        echo -e "${Green}1.${Font} 安装 V2Ray (Nginx+ws+tls)"
+        echo -e "${Green}2.${Font} 升级 V2Ray"
+        echo -e "${Green}3.${Font} 安装 AnyTLS (sing-box)"
+        echo -e "${Green}4.${Font} 升级 sing-box"
+        echo -e "${Green}0.${Font} 返回上级菜单 \n"
+        read -rp "请输入数字：" sub_num
+        case ${sub_num} in
+        1)
+            shell_mode="ws"
+            install_v2ray_ws_tls
+            ;;
+        2)
+            v2ray_update
+            ;;
+        3)
+            install_anytls
+            ;;
+        4)
+            singbox_update
+            ;;
+        0)
+            break
+            ;;
+        *)
+            echo -e "${RedBG}请输入正确的数字${Font}"
+            ;;
+        esac
+    done
+}
 
-    section_title "安装与升级"
-    echo -e ""
-    echo -e "${Green}1.${Font}  安装 V2Ray (Nginx+ws+tls)"
-    echo -e "${Green}2.${Font}  升级 V2Ray"
-    echo -e "${Green}3.${Font}  安装 AnyTLS (sing-box)"
-    echo -e "${Green}4.${Font}  升级 sing-box"
-    echo -e ""
+v2ray_config_menu() {
+    while true; do
+        section_title "V2Ray 配置"
+        echo -e "${Green}1.${Font} 变更 UUID"
+        echo -e "${Green}2.${Font} 变更 端口"
+        echo -e "${Green}3.${Font} 变更 TLS 版本(仅ws+tls有效)"
+        echo -e "${Green}4.${Font} 变更 伪装路径"
+        echo -e "${Green}0.${Font} 返回上级菜单 \n"
+        read -rp "请输入数字：" sub_num
+        case ${sub_num} in
+        1)
+            read -rp "请输入UUID:" UUID
+            modify_UUID
+            start_process_systemd
+            ;;
+        2)
+            read -rp "请输入连接端口:" port
+            if grep -q "ws" $v2ray_qr_config_file; then
+                modify_nginx_port
+            fi
+            start_process_systemd
+            ;;
+        3)
+            tls_type
+            ;;
+        4)
+            read -rp "请输入伪装路径(注意！不需要加斜杠 eg:ray):" camouflage_path
+            modify_camouflage_path
+            start_process_systemd
+            ;;
+        0)
+            break
+            ;;
+        *)
+            echo -e "${RedBG}请输入正确的数字${Font}"
+            ;;
+        esac
+    done
+}
 
-    section_title "V2Ray 配置"
-    echo -e ""
-    echo -e "${Green}5.${Font}  变更 UUID"
-    echo -e "${Green}6.${Font}  变更 端口"
-    echo -e "${Green}7.${Font}  变更 TLS 版本(仅ws+tls有效)"
-    echo -e "${Green}8.${Font}  变更 伪装路径"
-    echo -e ""
+anytls_config_menu() {
+    while true; do
+        section_title "AnyTLS 配置"
+        echo -e "${Green}1.${Font} 管理 AnyTLS 用户"
+        echo -e "${Green}2.${Font} 变更 AnyTLS 端口"
+        echo -e "${Green}0.${Font} 返回上级菜单 \n"
+        read -rp "请输入数字：" sub_num
+        case ${sub_num} in
+        1)
+            anytls_user_menu
+            ;;
+        2)
+            anytls_port_change
+            ;;
+        0)
+            break
+            ;;
+        *)
+            echo -e "${RedBG}请输入正确的数字${Font}"
+            ;;
+        esac
+    done
+}
 
-    section_title "AnyTLS 配置"
-    echo -e ""
-    echo -e "${Green}9.${Font}  管理 AnyTLS 用户"
-    echo -e "${Green}10.${Font} 变更 AnyTLS 端口"
-    echo -e ""
+view_menu() {
+    while true; do
+        section_title "查看信息"
+        echo -e "${Green}1.${Font} 查看 V2Ray 配置信息"
+        echo -e "${Green}2.${Font} 查看 AnyTLS 配置信息"
+        echo -e "${Green}3.${Font} 查看 V2Ray 实时访问日志"
+        echo -e "${Green}4.${Font} 查看 V2Ray 实时错误日志"
+        echo -e "${Green}5.${Font} 查看 AnyTLS 实时日志"
+        echo -e "${Green}0.${Font} 返回上级菜单 \n"
+        read -rp "请输入数字：" sub_num
+        case ${sub_num} in
+        1)
+            basic_information
+            if [[ $shell_mode == "ws" ]]; then
+                vmess_link_image_choice
+            else
+                vmess_qr_link_image
+            fi
+            show_information
+            ;;
+        2)
+            surge_config_output
+            ;;
+        3)
+            show_access_log
+            ;;
+        4)
+            show_error_log
+            ;;
+        5)
+            show_singbox_log
+            ;;
+        0)
+            break
+            ;;
+        *)
+            echo -e "${RedBG}请输入正确的数字${Font}"
+            ;;
+        esac
+    done
+}
 
-    section_title "查看信息"
-    echo -e ""
-    echo -e "${Green}11.${Font} 查看 V2Ray 配置信息"
-    echo -e "${Green}12.${Font} 查看 AnyTLS 配置信息"
-    echo -e "${Green}13.${Font} 查看 V2Ray 实时访问日志"
-    echo -e "${Green}14.${Font} 查看 V2Ray 实时错误日志"
-    echo -e "${Green}15.${Font} 查看 AnyTLS 实时日志"
-    echo -e ""
+cert_menu() {
+    while true; do
+        section_title "证书"
+        echo -e "${Green}1.${Font} 证书 有效期更新"
+        echo -e "${Green}2.${Font} 更新 证书crontab计划任务"
+        echo -e "${Green}3.${Font} 清空 证书遗留文件"
+        echo -e "${Green}0.${Font} 返回上级菜单 \n"
+        read -rp "请输入数字：" sub_num
+        case ${sub_num} in
+        1)
+            stop_process_systemd
+            ssl_update_manuel
+            start_process_systemd
+            ;;
+        2)
+            acme_cron_update
+            ;;
+        3)
+            delete_tls_key_and_crt
+            ;;
+        0)
+            break
+            ;;
+        *)
+            echo -e "${RedBG}请输入正确的数字${Font}"
+            ;;
+        esac
+    done
+}
 
-    section_title "证书"
-    echo -e ""
-    echo -e "${Green}16.${Font} 证书 有效期更新"
-    echo -e "${Green}17.${Font} 更新 证书crontab计划任务"
-    echo -e "${Green}18.${Font} 清空 证书遗留文件"
-    echo -e ""
-
-    section_title "其他"
-    echo -e ""
-    echo -e "${Green}19.${Font} 卸载"
-    echo -e "${Green}20.${Font} 更新 geoip.dat 和 geosite.dat"
-    echo -e "${Green}21.${Font} 退出 \n"
-
-    read -rp "请输入数字：" menu_num
-    case $menu_num in
-    0)
-        update_sh
-        ;;
-    1)
-        shell_mode="ws"
-        install_v2ray_ws_tls
-        ;;
-    2)
-        v2ray_update
-        ;;
-    3)
-        install_anytls
-        ;;
-    4)
-        singbox_update
-        ;;
-    5)
-        read -rp "请输入UUID:" UUID
-        modify_UUID
-        start_process_systemd
-        ;;
-    6)
-        read -rp "请输入连接端口:" port
-        if grep -q "ws" $v2ray_qr_config_file; then
-            modify_nginx_port
-        fi
-        start_process_systemd
-        ;;
-    7)
-        tls_type
-        ;;
-    8)
-        read -rp "请输入伪装路径(注意！不需要加斜杠 eg:ray):" camouflage_path
-        modify_camouflage_path
-        start_process_systemd
-        ;;
-    9)
-        anytls_user_menu
-        ;;
-    10)
-        anytls_port_change
-        ;;
-    11)
-        basic_information
-        if [[ $shell_mode == "ws" ]]; then
-            vmess_link_image_choice
-        else
-            vmess_qr_link_image
-        fi
-        show_information
-        ;;
-    12)
-        surge_config_output
-        ;;
-    13)
-        show_access_log
-        ;;
-    14)
-        show_error_log
-        ;;
-    15)
-        show_singbox_log
-        ;;
-    16)
-        stop_process_systemd
-        ssl_update_manuel
-        start_process_systemd
-        ;;
-    17)
-        acme_cron_update
-        ;;
-    18)
-        delete_tls_key_and_crt
-        ;;
-    19)
-        source '/etc/os-release'
-        uninstall_all
-        ;;
-    20)
-        update_dat
-        ;;
-    21)
-        exit 0
-        ;;
-    *)
-        echo -e "${RedBG}请输入正确的数字${Font}"
-        ;;
-    esac
+other_menu() {
+    while true; do
+        section_title "其他"
+        echo -e "${Green}1.${Font} 卸载"
+        echo -e "${Green}2.${Font} 更新 geoip.dat 和 geosite.dat"
+        echo -e "${Green}3.${Font} 升级 脚本"
+        echo -e "${Green}0.${Font} 返回上级菜单 \n"
+        read -rp "请输入数字：" sub_num
+        case ${sub_num} in
+        1)
+            source '/etc/os-release'
+            uninstall_all
+            ;;
+        2)
+            update_dat
+            ;;
+        3)
+            update_sh
+            ;;
+        0)
+            break
+            ;;
+        *)
+            echo -e "${RedBG}请输入正确的数字${Font}"
+            ;;
+        esac
     done
 }
 
