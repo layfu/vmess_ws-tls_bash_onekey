@@ -20,12 +20,30 @@ wget -N --no-check-certificate -q -O install.sh "https://raw.githubusercontent.c
 - SSL cipher 适配 OpenSSL 3.x
 - 支持更新 geoip.dat / geosite.dat
 - 移除 bbr / mtproxy / http/2 安装模式
+- 新增 AnyTLS 协议（基于 sing-box），复用 Let's Encrypt 证书，不自签证书
 
 ### 管理脚本
 
 ```bash
 ./install.sh          # 进入管理菜单
 ./install.sh dat_update   # 更新 geoip.dat / geosite.dat
+./install.sh singbox_update   # 升级 sing-box
+```
+
+### AnyTLS 安装
+
+进入管理菜单后选择 `17` 安装 AnyTLS（基于 [sing-box](https://sing-box.sagernet.org/)）：
+
+- 独立监听端口（默认 8443，与 Nginx 的 443 互不冲突）
+- 复用 `/data/v2ray.crt` `/data/v2ray.key` 证书（**不自签证书**）
+- 证书续签后 sing-box 会自动热加载，无需额外操作
+- 安装信息保存在 `~/anytls_info.inf`，包含 Surge 配置行与 `anytls://` URI
+
+Surge 配置示例（iOS 5.17.0+ / Mac 6.4.3+）：
+
+```ini
+[Proxy]
+AnyTLS = anytls, your.domain.com, 8443, password=xxxxxxxxxxxxxxxx, sni=your.domain.com, reuse=true
 ```
 
 ### 常用命令
@@ -36,6 +54,7 @@ systemctl stop v2ray       # 停止 V2Ray
 systemctl restart v2ray    # 重启 V2Ray
 systemctl restart nginx    # 重启 Nginx
 nginx -v                   # 查看 Nginx 版本
+systemctl restart sing-box # 重启 sing-box (AnyTLS)
 ```
 
 ### 目录结构
@@ -43,10 +62,12 @@ nginx -v                   # 查看 Nginx 版本
 | 路径 | 说明 |
 |---|---|
 | `/etc/v2ray/config.json` | V2Ray 服务端配置 |
+| `/etc/sing-box/config.json` | sing-box 服务端配置（AnyTLS） |
 | `/etc/nginx/` | Nginx 目录 |
 | `/home/wwwroot/3DCEList` | Web 伪装站点 |
 | `/data/v2ray.crt` `/data/v2ray.key` | SSL 证书 |
-| `~/v2ray_info.inf` | 客户端配置信息 |
+| `~/v2ray_info.inf` | V2Ray 客户端配置信息 |
+| `~/anytls_info.inf` | AnyTLS 客户端配置信息 |
 
 ### 证书
 

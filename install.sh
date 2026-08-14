@@ -51,6 +51,14 @@ nginx_systemd_file="/etc/systemd/system/nginx.service"
 v2ray_systemd_file="/etc/systemd/system/v2ray.service"
 v2ray_access_log="/var/log/v2ray/access.log"
 v2ray_error_log="/var/log/v2ray/error.log"
+singbox_bin_dir="/usr/local/bin/sing-box"
+singbox_conf_dir="/etc/sing-box"
+singbox_conf="${singbox_conf_dir}/config.json"
+singbox_systemd_file="/etc/systemd/system/sing-box.service"
+anytls_info_file="$HOME/anytls_info.inf"
+anytls_domain_file="/etc/sing-box/domain"
+anytls_port=""
+anytls_password=""
 amce_sh_file="/root/.acme.sh/acme.sh"
 ssl_update_file="/usr/bin/ssl_update.sh"
 nginx_version="1.30.4"
@@ -412,6 +420,301 @@ v2ray_update() {
     echo -e "${OK} ${GreenBG} V2Ray 已升级至 ${new_ver} ${Font}"
 }
 
+singbox_arch() {
+    case "$(uname -m)" in
+        'i386' | 'i686')
+            echo '386'
+            ;;
+        'amd64' | 'x86_64')
+            echo 'amd64'
+            ;;
+        'armv5tel')
+            echo 'armv5'
+            ;;
+        'armv6l')
+            echo 'armv6'
+            ;;
+        'armv7' | 'armv7l')
+            echo 'armv7'
+            ;;
+        'armv8' | 'aarch64')
+            echo 'arm64'
+            ;;
+        'mips64le')
+            echo 'mips64le'
+            ;;
+        'mipsle')
+            echo 'mipsle'
+            ;;
+        'ppc64le')
+            echo 'ppc64le'
+            ;;
+        'riscv64')
+            echo 'riscv64'
+            ;;
+        's390x')
+            echo 's390x'
+            ;;
+        'loongarch64')
+            echo 'loong64'
+            ;;
+        *)
+            echo -e "${Error} ${RedBG} 不支持的架构: $(uname -m) ${Font}"
+            exit 1
+            ;;
+    esac
+}
+
+singbox_download() {
+    local tmp_file latest_ver
+    tmp_file="$(mktemp)"
+    if ! curl -sS -H "Accept: application/vnd.github.v3+json" -o "$tmp_file" 'https://api.github.com/repos/SagerNet/sing-box/releases/latest'; then
+        rm -f "$tmp_file"
+        echo -e "${Error} ${RedBG} 获取 sing-box 版本信息失败，请检查网络连接 ${Font}"
+        return 1
+    fi
+    latest_ver="$(sed 'y/,/\n/' "$tmp_file" | grep 'tag_name' | awk -F '"' '{print $4}')"
+    rm -f "$tmp_file"
+
+    if [[ -z "$latest_ver" ]]; then
+        echo -e "${Error} ${RedBG} 获取 sing-box 版本信息失败 ${Font}"
+        return 1
+    fi
+
+    local arch tmp_dir
+    arch="$(singbox_arch)"
+    tmp_dir="$(mktemp -d)"
+    cd "$tmp_dir" || return 1
+
+    echo -e "${OK} ${GreenBG} 正在下载 sing-box ${latest_ver} (linux-${arch}) ... ${Font}"
+    local download_link
+    download_link="https://github.com/SagerNet/sing-box/releases/download/${latest_ver}/sing-box-${latest_ver#v}-linux-${arch}.tar.gz"
+    if ! curl -L -q --retry 5 --retry-delay 10 --retry-max-time 60 -o "sing-box.tar.gz" "$download_link"; then
+        echo -e "${Error} ${RedBG} sing-box 下载失败: ${download_link} ${Font}"
+        cd /tmp || true
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    tar -xzf sing-box.tar.gz
+    if [[ ! -f "${tmp_dir}/sing-box/sing-box" ]] && [[ ! -f "${tmp_dir}/sing-box-${latest_ver#v}-linux-${arch}/sing-box" ]]; then
+        echo -e "${Error} ${RedBG} 解压后未找到 sing-box 二进制文件 ${Font}"
+        cd /tmp || true
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    local bin_path
+    bin_path="$(find "$tmp_dir" -type f -name 'sing-box' -path '*sing-box*' | head -1)"
+    install -m 755 "$bin_path" "${singbox_bin_dir}"
+    judge "sing-box 安装"
+
+    cd /tmp || true
+    rm -rf "$tmp_dir"
+    return 0
+}
+
+singbox_systemd() {
+    cat >${singbox_systemd_file} <<EOF
+[Unit]
+Description=sing-box Service
+After=network.target nss-lookup.target
+
+[Service]
+User=root
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+ExecStart=${singbox_bin_dir} run -c ${singbox_conf}
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    judge "sing-box systemd ServerFile 添加"
+    systemctl daemon-reload
+}
+
+singbox_install() {
+    if [[ -f "${singbox_bin_dir}" ]]; then
+        echo -e "${OK} ${GreenBG} sing-box 已存在，跳过下载安装过程 ${Font}"
+        sleep 1
+    else
+        singbox_download
+        [[ $? -eq 0 ]] || exit 1
+    fi
+    mkdir -p ${singbox_conf_dir}
+    singbox_systemd
+}
+
+singbox_update() {
+    if [[ ! -f "${singbox_bin_dir}" ]]; then
+        echo -e "${Error} ${RedBG} sing-box 未安装，请先安装 AnyTLS ${Font}"
+        return 1
+    fi
+
+    local current_ver
+    current_ver="$(${singbox_bin_dir} version -n 2>/dev/null | head -n 1)"
+    echo -e "${OK} ${GreenBG} 当前 sing-box 版本: ${current_ver} ${Font}"
+
+    local tmp_file latest_ver
+    tmp_file="$(mktemp)"
+    if ! curl -sS -H "Accept: application/vnd.github.v3+json" -o "$tmp_file" 'https://api.github.com/repos/SagerNet/sing-box/releases/latest'; then
+        rm -f "$tmp_file"
+        echo -e "${Error} ${RedBG} 获取版本信息失败，请检查网络连接 ${Font}"
+        return 1
+    fi
+    latest_ver="$(sed 'y/,/\n/' "$tmp_file" | grep 'tag_name' | awk -F '"' '{print $4}')"
+    rm -f "$tmp_file"
+
+    if [[ -z "$latest_ver" ]]; then
+        echo -e "${Error} ${RedBG} 获取版本信息失败 ${Font}"
+        return 1
+    fi
+    latest_ver="${latest_ver#v}"
+
+    if [[ "${current_ver}" == "${latest_ver}" ]]; then
+        echo -e "${OK} ${GreenBG} 当前已是最新版本 ${latest_ver}，无需升级 ${Font}"
+        return 0
+    fi
+
+    echo -e "${OK} ${GreenBG} 发现新版本: ${latest_ver} (当前: ${current_ver}) ${Font}"
+    read -rp "是否升级? [Y/N]: " update_confirm
+    case $update_confirm in
+        [yY][eE][sS]|[yY])
+            ;;
+        *)
+            echo -e "${OK} ${GreenBG} 已取消升级 ${Font}"
+            return 0
+            ;;
+    esac
+
+    systemctl stop sing-box
+    if singbox_download; then
+        judge "sing-box 升级"
+    else
+        echo -e "${Error} ${RedBG} sing-box 升级失败 ${Font}"
+        systemctl start sing-box
+        return 1
+    fi
+    systemctl start sing-box
+
+    local new_ver
+    new_ver="$(${singbox_bin_dir} version -n 2>/dev/null | head -n 1)"
+    echo -e "${OK} ${GreenBG} sing-box 已升级至 ${new_ver} ${Font}"
+}
+
+anytls_port_set() {
+    read -rp "请输入 AnyTLS 连接端口（default:8443）:" anytls_port
+    [[ -z ${anytls_port} ]] && anytls_port="8443"
+}
+
+anytls_password_set() {
+    anytls_password="$(head -c 16 /dev/urandom | md5sum | head -c 16)"
+}
+
+anytls_conf_add() {
+    cat >${singbox_conf} <<EOF
+{
+  "log": {
+    "level": "warn",
+    "timestamp": true
+  },
+  "inbounds": [
+    {
+      "type": "anytls",
+      "tag": "anytls-in",
+      "listen": "::",
+      "listen_port": ${anytls_port},
+      "users": [
+        {
+          "name": "anytls",
+          "password": "${anytls_password}"
+        }
+      ],
+      "tls": {
+        "enabled": true,
+        "certificate_path": "/data/v2ray.crt",
+        "key_path": "/data/v2ray.key"
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    }
+  ],
+  "route": {
+    "final": "direct"
+  }
+}
+EOF
+    judge "sing-box 配置写入"
+}
+
+surge_config_output() {
+    if [[ -z "${anytls_port}" ]] && [[ -f "${singbox_conf}" ]]; then
+        anytls_port="$(grep '\"listen_port\"' ${singbox_conf} | awk -F ':' '{print $2}' | tr -d ' ,')"
+    fi
+    if [[ -z "${anytls_password}" ]] && [[ -f "${singbox_conf}" ]]; then
+        anytls_password="$(grep '\"password\"' ${singbox_conf} | awk -F '"' '{print $4}')"
+    fi
+    local domain=""
+    [[ -f "${anytls_domain_file}" ]] && domain="$(cat ${anytls_domain_file})"
+    [[ -z "${domain}" && -f "${v2ray_qr_config_file}" ]] && domain="$(grep '\"add\"' ${v2ray_qr_config_file} | awk -F '"' '{print $4}')"
+
+    {
+        echo -e "${OK} ${GreenBG} AnyTLS 安装成功"
+        echo -e "${Red} AnyTLS 配置信息 ${Font}"
+        echo -e "${Red} 地址（address）:${Font} ${domain}"
+        echo -e "${Red} 端口（port）：${Font} ${anytls_port}"
+        echo -e "${Red} 密码（password）：${Font} ${anytls_password}"
+        echo -e "${Red} SNI：${Font} ${domain}"
+        echo -e ""
+        echo -e "${Red} Surge 配置（iOS 5.17.0+ / Mac 6.4.3+）${Font}"
+        echo -e "[Proxy]"
+        echo -e "AnyTLS = anytls, ${domain}, ${anytls_port}, password=${anytls_password}, sni=${domain}, reuse=true"
+        echo -e ""
+        echo -e "${Red} 其他客户端 URI ${Font}"
+        echo -e "anytls://${anytls_password}@${domain}:${anytls_port}?sni=${domain}#AnyTLS-${domain}"
+    } >"${anytls_info_file}"
+
+    cat "${anytls_info_file}"
+}
+
+anytls_password_change() {
+    if [[ ! -f ${singbox_conf} ]]; then
+        echo -e "${Error} ${RedBG} AnyTLS 未安装，请先安装 ${Font}"
+        return 1
+    fi
+    anytls_port="$(grep '\"listen_port\"' ${singbox_conf} | awk -F ':' '{print $2}' | tr -d ' ,')"
+    anytls_password_set
+    anytls_conf_add
+    systemctl restart sing-box
+    judge "AnyTLS 密码变更"
+    surge_config_output
+}
+
+anytls_port_change() {
+    if [[ ! -f ${singbox_conf} ]]; then
+        echo -e "${Error} ${RedBG} AnyTLS 未安装，请先安装 ${Font}"
+        return 1
+    fi
+    anytls_password="$(grep '\"password\"' ${singbox_conf} | awk -F '"' '{print $4}')"
+    read -rp "请输入新的 AnyTLS 端口:" anytls_port
+    port_exist_check "${anytls_port}"
+    anytls_conf_add
+    systemctl restart sing-box
+    judge "AnyTLS 端口变更"
+    surge_config_output
+}
+
 nginx_exist_check() {
     if [[ -f "/etc/nginx/sbin/nginx" ]]; then
         echo -e "${OK} ${GreenBG} Nginx已存在，跳过编译安装过程 ${Font}"
@@ -684,6 +987,10 @@ start_process_systemd() {
     judge "Nginx 启动"
     systemctl restart v2ray
     judge "V2ray 启动"
+    if [[ -f ${singbox_systemd_file} ]]; then
+        systemctl restart sing-box
+        judge "sing-box 启动"
+    fi
 }
 
 enable_process_systemd() {
@@ -691,12 +998,16 @@ enable_process_systemd() {
     judge "设置 v2ray 开机自启"
     systemctl enable nginx
     judge "设置 Nginx 开机自启"
-
+    if [[ -f ${singbox_systemd_file} ]]; then
+        systemctl enable sing-box
+        judge "设置 sing-box 开机自启"
+    fi
 }
 
 stop_process_systemd() {
     systemctl stop nginx
     systemctl stop v2ray
+    [[ -f ${singbox_systemd_file} ]] && systemctl stop sing-box
 }
 nginx_process_disabled() {
     [ -f $nginx_systemd_file ] && systemctl stop nginx && systemctl disable nginx
@@ -990,6 +1301,23 @@ uninstall_all() {
     fi
     [[ -d $v2ray_conf_dir ]] && rm -rf $v2ray_conf_dir
     [[ -d $web_dir ]] && rm -rf $web_dir
+    if [[ -f ${singbox_bin_dir} || -d ${singbox_conf_dir} || -f ${singbox_systemd_file} ]]; then
+        echo -e "${OK} ${Green} 是否卸载 sing-box (AnyTLS) [Y/N]? ${Font}"
+        read -r uninstall_singbox
+        case $uninstall_singbox in
+        [yY][eE][sS] | [yY])
+            systemctl disable sing-box >/dev/null 2>&1
+            systemctl stop sing-box >/dev/null 2>&1
+            rm -f ${singbox_systemd_file}
+            rm -f ${singbox_bin_dir}
+            rm -rf ${singbox_conf_dir}
+            rm -f ${anytls_info_file}
+            echo -e "${OK} ${Green} 已卸载 sing-box (AnyTLS) ${Font}"
+            ;;
+        *) ;;
+
+        esac
+    fi
     echo -e "${OK} ${Green} 是否卸载acme.sh及证书 [Y/N]? ${Font}"
     read -r uninstall_acme
     case $uninstall_acme in
@@ -1009,9 +1337,17 @@ delete_tls_key_and_crt() {
     echo -e "${OK} ${GreenBG} 已清空证书遗留文件 ${Font}"
 }
 judge_mode() {
+    shell_mode="None"
     if [ -f $v2ray_bin_dir ] || [ -f $v2ray_bin_dir_old/v2ray ]; then
         if grep -q "ws" $v2ray_qr_config_file; then
             shell_mode="ws"
+        fi
+    fi
+    if [[ -f "${singbox_conf}" ]]; then
+        if [[ "${shell_mode}" == "None" ]]; then
+            shell_mode="anytls"
+        else
+            shell_mode="${shell_mode}+anytls"
         fi
     fi
 }
@@ -1041,6 +1377,26 @@ install_v2ray_ws_tls() {
     start_process_systemd
     enable_process_systemd
     acme_cron_update
+}
+install_anytls() {
+    is_root
+    check_system
+    dependency_install
+    basic_optimization
+    domain_check
+    mkdir -p ${singbox_conf_dir}
+    echo "$domain" >${anytls_domain_file}
+    anytls_port_set
+    anytls_password_set
+    port_exist_check "${anytls_port}"
+    singbox_install
+    ssl_judge_and_install
+    anytls_conf_add
+    systemctl restart sing-box
+    judge "sing-box 启动"
+    systemctl enable sing-box
+    judge "设置 sing-box 开机自启"
+    surge_config_output
 }
 update_sh() {
     ol_version=$(curl -L -s -H 'Cache-Control: no-cache' "https://raw.githubusercontent.com/layfu/vmess_ws-tls_bash_onekey/${github_branch}/install.sh?t=$(date +%s)" | grep "shell_version=" | head -1 | awk -F '=|"' '{print $3}')
@@ -1085,6 +1441,9 @@ list() {
     v2ray_update)
         v2ray_update
         ;;
+    singbox_update)
+        singbox_update
+        ;;
     *)
         menu
         ;;
@@ -1125,6 +1484,12 @@ menu() {
     echo -e "${Green}14.${Font} 清空 证书遗留文件"
     echo -e "${Green}15.${Font} 更新 geoip.dat 和 geosite.dat"
     echo -e "${Green}16.${Font} 退出 \n"
+    echo -e "—————————————— AnyTLS (sing-box) ——————————————"
+    echo -e "${Green}17.${Font} 安装 AnyTLS (sing-box)"
+    echo -e "${Green}18.${Font} 升级 sing-box"
+    echo -e "${Green}19.${Font} 查看 AnyTLS 配置信息"
+    echo -e "${Green}20.${Font} 变更 AnyTLS 密码"
+    echo -e "${Green}21.${Font} 变更 AnyTLS 端口 \n"
 
     read -rp "请输入数字：" menu_num
     case $menu_num in
@@ -1196,6 +1561,21 @@ menu() {
         ;;
     16)
         exit 0
+        ;;
+    17)
+        install_anytls
+        ;;
+    18)
+        singbox_update
+        ;;
+    19)
+        surge_config_output
+        ;;
+    20)
+        anytls_password_change
+        ;;
+    21)
+        anytls_port_change
         ;;
     *)
         echo -e "${RedBG}请输入正确的数字${Font}"
