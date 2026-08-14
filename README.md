@@ -32,7 +32,7 @@ wget -N --no-check-certificate -q -O install.sh "https://raw.githubusercontent.c
 
 ### AnyTLS 安装
 
-进入管理菜单后选择 `17` 安装 AnyTLS（基于 [sing-box](https://sing-box.sagernet.org/)）：
+进入管理菜单后选择 `3` 安装 AnyTLS（基于 [sing-box](https://sing-box.sagernet.org/)）：
 
 - 独立监听端口（默认 8443，与 Nginx 的 443 互不冲突）
 - 复用 `/data/v2ray.crt` `/data/v2ray.key` 证书（**不自签证书**）
