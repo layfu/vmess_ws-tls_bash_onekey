@@ -31,7 +31,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.1.0"
+shell_version="1.6.2.0"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -48,6 +48,9 @@ v2ctl_bin_dir="/usr/local/bin/v2ctl"
 v2ray_info_file="$HOME/v2ray_info.inf"
 v2ray_qr_config_file="/usr/local/vmess_qr.json"
 vmess_users_file="/etc/v2ray/users"
+routing_conf_file="/etc/v2ray/routing.conf"
+block_domains_file="/etc/v2ray/block_domains"
+block_ips_file="/etc/v2ray/block_ips"
 nginx_systemd_file="/etc/systemd/system/nginx.service"
 v2ray_systemd_file="/etc/systemd/system/v2ray.service"
 v2ray_access_log="/var/log/v2ray/access.log"
@@ -1139,6 +1142,290 @@ vmess_user_menu() {
     done
 }
 
+routing_load() {
+    block_cn=0
+    block_ads=0
+    block_bt=1
+    if [[ -f "${routing_conf_file}" ]]; then
+        block_cn="$(grep '^block_cn=' "${routing_conf_file}" | head -1 | cut -d= -f2)"
+        block_ads="$(grep '^block_ads=' "${routing_conf_file}" | head -1 | cut -d= -f2)"
+        block_bt="$(grep '^block_bt=' "${routing_conf_file}" | head -1 | cut -d= -f2)"
+    fi
+    [[ -z "${block_cn}" ]] && block_cn=0
+    [[ -z "${block_ads}" ]] && block_ads=0
+    [[ -z "${block_bt}" ]] && block_bt=1
+}
+
+routing_save() {
+    mkdir -p /etc/v2ray
+    cat >"${routing_conf_file}" <<EOF
+block_cn=${block_cn}
+block_ads=${block_ads}
+block_bt=${block_bt}
+EOF
+}
+
+_rules_first=1
+ROUTING_RULES=""
+
+_rules_append() {
+    if [[ ${_rules_first} -eq 1 ]]; then
+        _rules_first=0
+        ROUTING_RULES="$1"
+    else
+        ROUTING_RULES="${ROUTING_RULES},$1"
+    fi
+}
+
+routing_rules_gen() {
+    ROUTING_RULES=""
+    _rules_first=1
+
+    if [[ "${block_bt}" == "1" ]]; then
+        _rules_append '{"type":"field","protocol":["bittorrent"],"outboundTag":"blocked"}'
+    fi
+    if [[ "${block_ads}" == "1" ]]; then
+        _rules_append '{"type":"field","domains":["geosite:category-ads"],"outboundTag":"blocked"}'
+    fi
+    if [[ "${block_cn}" == "1" ]]; then
+        _rules_append '{"type":"field","domains":["geosite:cn"],"outboundTag":"blocked"}'
+        _rules_append '{"type":"field","ip":["geoip:cn"],"outboundTag":"blocked"}'
+    fi
+
+    local domains_json="" d first_d=1
+    if [[ -f "${block_domains_file}" ]]; then
+        while read -r d; do
+            [[ -z "${d}" ]] && continue
+            if [[ ${first_d} -eq 1 ]]; then first_d=0; else domains_json="${domains_json},"; fi
+            domains_json="${domains_json}\"domain:${d}\""
+        done <"${block_domains_file}"
+    fi
+    [[ -n "${domains_json}" ]] && _rules_append "{\"type\":\"field\",\"domains\":[${domains_json}],\"outboundTag\":\"blocked\"}"
+
+    local ips_json="" ip first_i=1
+    if [[ -f "${block_ips_file}" ]]; then
+        while read -r ip; do
+            [[ -z "${ip}" ]] && continue
+            if [[ ${first_i} -eq 1 ]]; then first_i=0; else ips_json="${ips_json},"; fi
+            ips_json="${ips_json}\"${ip}\""
+        done <"${block_ips_file}"
+    fi
+    [[ -n "${ips_json}" ]] && _rules_append "{\"type\":\"field\",\"ip\":[${ips_json}],\"outboundTag\":\"blocked\"}"
+
+    echo "${ROUTING_RULES}"
+}
+
+routing_domain_strategy() {
+    if [[ "${block_cn}" == "1" ]] || [[ -s "${block_ips_file}" ]]; then
+        echo "IPIfNonMatch"
+    else
+        echo "AsIs"
+    fi
+}
+
+routing_sniffing_gen() {
+    if [[ "${block_bt}" == "1" ]]; then
+        echo '      "sniffing": { "enabled": true },'
+    fi
+}
+
+block_domain_list() {
+    echo -e "${OK} ${GreenBG} 当前屏蔽域名列表 ${Font}"
+    if [[ ! -f "${block_domains_file}" ]] || [[ ! -s "${block_domains_file}" ]]; then
+        echo -e "${Red} 无 ${Font}"
+        return 0
+    fi
+    local idx=0
+    while read -r d; do
+        [[ -z "${d}" ]] && continue
+        idx=$((idx + 1))
+        echo -e "${Green}${idx}.${Font} ${d}"
+    done <"${block_domains_file}"
+}
+
+block_domain_add() {
+    read -rp "请输入要屏蔽的域名（eg: example.com）:" domain_item
+    [[ -z "${domain_item}" ]] && return 1
+    if [[ "${domain_item}" =~ [[:space:]] ]]; then
+        echo -e "${Error} ${RedBG} 域名不能包含空格 ${Font}"
+        return 1
+    fi
+    mkdir -p /etc/v2ray
+    echo "${domain_item}" >>"${block_domains_file}"
+    v2ray_conf_add
+    systemctl restart v2ray
+    judge "屏蔽域名添加"
+}
+
+block_domain_del() {
+    if [[ ! -s "${block_domains_file}" ]]; then
+        echo -e "${Error} ${RedBG} 屏蔽域名列表为空 ${Font}"
+        return 1
+    fi
+    block_domain_list
+    read -rp "请输入要删除的域名:" del_domain
+    [[ -z "${del_domain}" ]] && return 1
+    sed -i "/^${del_domain}$/d" "${block_domains_file}"
+    v2ray_conf_add
+    systemctl restart v2ray
+    judge "屏蔽域名删除"
+}
+
+block_ip_list() {
+    echo -e "${OK} ${GreenBG} 当前屏蔽 IP 列表 ${Font}"
+    if [[ ! -f "${block_ips_file}" ]] || [[ ! -s "${block_ips_file}" ]]; then
+        echo -e "${Red} 无 ${Font}"
+        return 0
+    fi
+    local idx=0
+    while read -r ip_item; do
+        [[ -z "${ip_item}" ]] && continue
+        idx=$((idx + 1))
+        echo -e "${Green}${idx}.${Font} ${ip_item}"
+    done <"${block_ips_file}"
+}
+
+block_ip_add() {
+    read -rp "请输入要屏蔽的 IP 或 CIDR（eg: 1.2.3.4 或 10.0.0.0/8）:" ip_item
+    [[ -z "${ip_item}" ]] && return 1
+    if [[ "${ip_item}" =~ [[:space:]] ]]; then
+        echo -e "${Error} ${RedBG} IP 不能包含空格 ${Font}"
+        return 1
+    fi
+    mkdir -p /etc/v2ray
+    echo "${ip_item}" >>"${block_ips_file}"
+    v2ray_conf_add
+    systemctl restart v2ray
+    judge "屏蔽 IP 添加"
+}
+
+block_ip_del() {
+    if [[ ! -s "${block_ips_file}" ]]; then
+        echo -e "${Error} ${RedBG} 屏蔽 IP 列表为空 ${Font}"
+        return 1
+    fi
+    block_ip_list
+    read -rp "请输入要删除的 IP 或 CIDR:" del_ip
+    [[ -z "${del_ip}" ]] && return 1
+    sed -i "/^${del_ip}$/d" "${block_ips_file}"
+    v2ray_conf_add
+    systemctl restart v2ray
+    judge "屏蔽 IP 删除"
+}
+
+block_domain_menu() {
+    while true; do
+        echo -e "\t 禁止自定义域名"
+        echo -e "${Green}1.${Font} 查看屏蔽域名列表"
+        echo -e "${Green}2.${Font} 添加屏蔽域名"
+        echo -e "${Green}3.${Font} 删除屏蔽域名"
+        echo -e "${Green}0.${Font} 返回上级菜单 \n"
+        read -rp "请输入数字：" bd_num
+        case ${bd_num} in
+        1)
+            block_domain_list
+            ;;
+        2)
+            block_domain_add
+            ;;
+        3)
+            block_domain_del
+            ;;
+        0)
+            break
+            ;;
+        *)
+            echo -e "${RedBG}请输入正确的数字${Font}"
+            ;;
+        esac
+    done
+}
+
+block_ip_menu() {
+    while true; do
+        echo -e "\t 禁止自定义 IP"
+        echo -e "${Green}1.${Font} 查看屏蔽 IP 列表"
+        echo -e "${Green}2.${Font} 添加屏蔽 IP"
+        echo -e "${Green}3.${Font} 删除屏蔽 IP"
+        echo -e "${Green}0.${Font} 返回上级菜单 \n"
+        read -rp "请输入数字：" bi_num
+        case ${bi_num} in
+        1)
+            block_ip_list
+            ;;
+        2)
+            block_ip_add
+            ;;
+        3)
+            block_ip_del
+            ;;
+        0)
+            break
+            ;;
+        *)
+            echo -e "${RedBG}请输入正确的数字${Font}"
+            ;;
+        esac
+    done
+}
+
+routing_menu() {
+    if [[ ! -f ${v2ray_qr_config_file} ]]; then
+        echo -e "${Error} ${RedBG} V2Ray 未安装，请先安装 ${Font}"
+        return 1
+    fi
+    while true; do
+        routing_load
+        local cn_s="关" ads_s="关" bt_s="关"
+        [[ "${block_cn}" == "1" ]] && cn_s="开"
+        [[ "${block_ads}" == "1" ]] && ads_s="开"
+        [[ "${block_bt}" == "1" ]] && bt_s="开"
+        echo -e "\t 路由规则（屏蔽）"
+        echo -e "${Green}1.${Font} 禁止国内地址  [${cn_s}]"
+        echo -e "${Green}2.${Font} 禁止广告地址  [${ads_s}]"
+        echo -e "${Green}3.${Font} 禁止 BT 协议  [${bt_s}]"
+        echo -e "${Green}4.${Font} 禁止自定义域名"
+        echo -e "${Green}5.${Font} 禁止自定义 IP"
+        echo -e "${Green}0.${Font} 返回上级菜单 \n"
+        read -rp "请输入数字：" routing_num
+        case ${routing_num} in
+        1)
+            if [[ "${block_cn}" == "1" ]]; then block_cn=0; else block_cn=1; fi
+            routing_save
+            v2ray_conf_add
+            systemctl restart v2ray
+            judge "禁止国内地址 切换"
+            ;;
+        2)
+            if [[ "${block_ads}" == "1" ]]; then block_ads=0; else block_ads=1; fi
+            routing_save
+            v2ray_conf_add
+            systemctl restart v2ray
+            judge "禁止广告地址 切换"
+            ;;
+        3)
+            if [[ "${block_bt}" == "1" ]]; then block_bt=0; else block_bt=1; fi
+            routing_save
+            v2ray_conf_add
+            systemctl restart v2ray
+            judge "禁止 BT 协议 切换"
+            ;;
+        4)
+            block_domain_menu
+            ;;
+        5)
+            block_ip_menu
+            ;;
+        0)
+            break
+            ;;
+        *)
+            echo -e "${RedBG}请输入正确的数字${Font}"
+            ;;
+        esac
+    done
+}
+
 v2ray_conf_add() {
     vmess_users_ensure
     local clients_json="" name uuid first=1
@@ -1160,6 +1447,12 @@ v2ray_conf_add() {
     [[ -z "${inbound_port}" ]] && inbound_port=$((RANDOM + 10000))
     PORT="${inbound_port}"
 
+    routing_load
+    local routing_rules_json routing_ds sniffing_json
+    routing_rules_json="$(routing_rules_gen)"
+    routing_ds="$(routing_domain_strategy)"
+    sniffing_json="$(routing_sniffing_gen)"
+
     cat >${v2ray_conf} <<EOF
 {
   "log": {
@@ -1178,6 +1471,7 @@ v2ray_conf_add() {
           ${clients_json}
         ]
       },
+${sniffing_json}
       "streamSettings": {
         "network": "ws",
         "wsSettings": {
@@ -1201,13 +1495,9 @@ v2ray_conf_add() {
     ]
   },
   "routing": {
-    "domainStrategy": "AsIs",
+    "domainStrategy": "${routing_ds}",
     "rules": [
-      {
-        "type": "field",
-        "inboundTag": ["vmess-in"],
-        "outboundTag": "direct"
-      }
+      ${routing_rules_json}
     ]
   }
 }
@@ -1895,6 +2185,7 @@ v2ray_config_menu() {
         echo -e "${Green}2.${Font} 变更 端口"
         echo -e "${Green}3.${Font} 变更 TLS 版本(仅ws+tls有效)"
         echo -e "${Green}4.${Font} 变更 伪装路径"
+        echo -e "${Green}5.${Font} 路由规则"
         echo -e "${Green}0.${Font} 返回上级菜单 \n"
         read -rp "请输入数字：" sub_num
         case ${sub_num} in
@@ -1915,6 +2206,9 @@ v2ray_config_menu() {
             read -rp "请输入伪装路径(注意！不需要加斜杠 eg:ray):" camouflage_path
             modify_camouflage_path
             start_process_systemd
+            ;;
+        5)
+            routing_menu
             ;;
         0)
             break
