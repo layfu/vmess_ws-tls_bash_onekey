@@ -31,7 +31,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.2.0"
+shell_version="1.6.2.1"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -683,6 +683,39 @@ anytls_user_password() {
     surge_config_output
 }
 
+anytls_user_rename() {
+    if [[ ! -f "${singbox_conf}" ]]; then
+        echo -e "${Error} ${RedBG} AnyTLS 未安装，请先安装 ${Font}"
+        return 1
+    fi
+    anytls_users_ensure
+    anytls_user_list
+    read -rp "请输入要修改的用户名:" old_name
+    [[ -z "${old_name}" ]] && return 1
+    if ! grep -q "^${old_name} " "${anytls_users_file}"; then
+        echo -e "${Error} ${RedBG} 用户 ${old_name} 不存在 ${Font}"
+        return 1
+    fi
+    read -rp "请输入新的用户名:" new_name
+    [[ -z "${new_name}" ]] && return 1
+    if [[ "${new_name}" =~ [[:space:]] ]]; then
+        echo -e "${Error} ${RedBG} 用户名不能包含空格 ${Font}"
+        return 1
+    fi
+    if grep -q "^${new_name} " "${anytls_users_file}"; then
+        echo -e "${Error} ${RedBG} 用户 ${new_name} 已存在 ${Font}"
+        return 1
+    fi
+    local old_password
+    old_password="$(grep "^${old_name} " "${anytls_users_file}" | head -1 | awk '{print $2}')"
+    sed -i "/^${old_name} /d" "${anytls_users_file}"
+    echo "${new_name} ${old_password}" >>"${anytls_users_file}"
+    anytls_conf_add
+    systemctl restart sing-box
+    judge "AnyTLS 用户名修改"
+    surge_config_output
+}
+
 anytls_user_menu() {
     if [[ ! -f "${singbox_conf}" ]]; then
         echo -e "${Error} ${RedBG} AnyTLS 未安装，请先安装 ${Font}"
@@ -694,7 +727,8 @@ anytls_user_menu() {
         echo -e "${Green}2.${Font} 添加用户"
         echo -e "${Green}3.${Font} 删除用户"
         echo -e "${Green}4.${Font} 修改用户密码"
-        echo -e "${Green}5.${Font} 返回上级菜单 \n"
+        echo -e "${Green}5.${Font} 修改用户名"
+        echo -e "${Green}6.${Font} 返回上级菜单 \n"
         read -rp "请输入数字：" user_menu_num
         case ${user_menu_num} in
         1)
@@ -710,6 +744,9 @@ anytls_user_menu() {
             anytls_user_password
             ;;
         5)
+            anytls_user_rename
+            ;;
+        6)
             break
             ;;
         *)
@@ -1106,6 +1143,39 @@ vmess_user_uuid() {
     v2ray_config_output
 }
 
+vmess_user_rename() {
+    if [[ ! -f ${v2ray_qr_config_file} ]]; then
+        echo -e "${Error} ${RedBG} V2Ray 未安装，请先安装 ${Font}"
+        return 1
+    fi
+    vmess_users_ensure
+    vmess_user_list
+    read -rp "请输入要修改的用户名:" old_name
+    [[ -z "${old_name}" ]] && return 1
+    if ! grep -q "^${old_name} " "${vmess_users_file}"; then
+        echo -e "${Error} ${RedBG} 用户 ${old_name} 不存在 ${Font}"
+        return 1
+    fi
+    read -rp "请输入新的用户名:" new_name
+    [[ -z "${new_name}" ]] && return 1
+    if [[ "${new_name}" =~ [[:space:]] ]]; then
+        echo -e "${Error} ${RedBG} 用户名不能包含空格 ${Font}"
+        return 1
+    fi
+    if grep -q "^${new_name} " "${vmess_users_file}"; then
+        echo -e "${Error} ${RedBG} 用户 ${new_name} 已存在 ${Font}"
+        return 1
+    fi
+    local old_uuid
+    old_uuid="$(grep "^${old_name} " "${vmess_users_file}" | head -1 | awk '{print $2}')"
+    sed -i "/^${old_name} /d" "${vmess_users_file}"
+    echo "${new_name} ${old_uuid}" >>"${vmess_users_file}"
+    v2ray_conf_add
+    systemctl restart v2ray
+    judge "VMess 用户名修改"
+    v2ray_config_output
+}
+
 vmess_user_menu() {
     if [[ ! -f ${v2ray_qr_config_file} ]]; then
         echo -e "${Error} ${RedBG} V2Ray 未安装，请先安装 ${Font}"
@@ -1117,7 +1187,8 @@ vmess_user_menu() {
         echo -e "${Green}2.${Font} 添加用户"
         echo -e "${Green}3.${Font} 删除用户"
         echo -e "${Green}4.${Font} 更换用户 UUID"
-        echo -e "${Green}5.${Font} 返回上级菜单 \n"
+        echo -e "${Green}5.${Font} 修改用户名"
+        echo -e "${Green}6.${Font} 返回上级菜单 \n"
         read -rp "请输入数字：" user_menu_num
         case ${user_menu_num} in
         1)
@@ -1133,6 +1204,9 @@ vmess_user_menu() {
             vmess_user_uuid
             ;;
         5)
+            vmess_user_rename
+            ;;
+        6)
             break
             ;;
         *)
