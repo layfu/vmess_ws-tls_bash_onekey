@@ -21,6 +21,7 @@ wget -N --no-check-certificate -q -O install.sh "https://raw.githubusercontent.c
 - 支持更新 geoip.dat / geosite.dat
 - 移除 bbr / mtproxy / http/2 安装模式
 - 新增 AnyTLS 协议（基于 sing-box），复用 Let's Encrypt 证书，不自签证书
+- VMess / AnyTLS 均支持多用户管理
 
 ### 管理脚本
 
@@ -63,7 +64,9 @@ systemctl restart sing-box # 重启 sing-box (AnyTLS)
 | 路径 | 说明 |
 |---|---|
 | `/etc/v2ray/config.json` | V2Ray 服务端配置 |
+| `/etc/v2ray/users` | VMess 用户列表 |
 | `/etc/sing-box/config.json` | sing-box 服务端配置（AnyTLS） |
+| `/etc/sing-box/users` | AnyTLS 用户列表 |
 | `/etc/nginx/` | Nginx 目录 |
 | `/home/wwwroot/3DCEList` | Web 伪装站点 |
 | `/data/v2ray.crt` `/data/v2ray.key` | SSL 证书 |

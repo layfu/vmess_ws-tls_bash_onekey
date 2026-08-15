@@ -31,7 +31,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.0.4"
+shell_version="1.6.1.0"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -47,6 +47,7 @@ v2ray_bin_dir="/usr/local/bin/v2ray"
 v2ctl_bin_dir="/usr/local/bin/v2ctl"
 v2ray_info_file="$HOME/v2ray_info.inf"
 v2ray_qr_config_file="/usr/local/vmess_qr.json"
+vmess_users_file="/etc/v2ray/users"
 nginx_systemd_file="/etc/systemd/system/nginx.service"
 v2ray_systemd_file="/etc/systemd/system/v2ray.service"
 v2ray_access_log="/var/log/v2ray/access.log"
@@ -261,34 +262,6 @@ port_alterid_set() {
         [[ -z ${port} ]] && port="443"
         alterID="0"
     fi
-}
-
-modify_path() {
-    if [[ "on" == "$old_config_status" ]]; then
-        camouflage="$(grep '\"path\"' $v2ray_qr_config_file | awk -F '"' '{print $4}')"
-    fi
-    sed -i "/\"path\"/c \\\t  \"path\":\"${camouflage}\"" ${v2ray_conf}
-    judge "V2ray 伪装路径 修改"
-}
-
-modify_inbound_port() {
-    if [[ "on" == "$old_config_status" ]]; then
-        port="$(info_extraction '\"port\"')"
-    fi
-    PORT=$((RANDOM + 10000))
-    sed -i "/\"port\"/c  \    \"port\":${PORT}," ${v2ray_conf}
-    judge "V2ray inbound_port 修改"
-}
-
-modify_UUID() {
-    [ -z "$UUID" ] && UUID=$(cat /proc/sys/kernel/random/uuid)
-    if [[ "on" == "$old_config_status" ]]; then
-        UUID="$(info_extraction '\"id\"')"
-    fi
-    sed -i "/\"id\"/c \\\t  \"id\":\"${UUID}\"," ${v2ray_conf}
-    judge "V2ray UUID 修改"
-    [ -f ${v2ray_qr_config_file} ] && sed -i "/\"id\"/c \\  \"id\": \"${UUID}\"," ${v2ray_qr_config_file}
-    echo -e "${OK} ${GreenBG} UUID:${UUID} ${Font}"
 }
 
 modify_nginx_port() {
@@ -1034,12 +1007,212 @@ acme() {
     fi
 }
 
-v2ray_conf_add_tls() {
-    cd /etc/v2ray || exit
-    wget --no-check-certificate https://raw.githubusercontent.com/layfu/vmess_ws-tls_bash_onekey/${github_branch}/tls/config.json -O config.json
-    modify_path
-    modify_inbound_port
-    modify_UUID
+vmess_users_ensure() {
+    if [[ ! -f "${vmess_users_file}" ]]; then
+        mkdir -p /etc/v2ray
+        local existing_uuid=""
+        if [[ -f "${v2ray_qr_config_file}" ]]; then
+            existing_uuid="$(info_extraction '\"id\"')"
+        fi
+        [[ -z "${existing_uuid}" ]] && existing_uuid="$(cat /proc/sys/kernel/random/uuid)"
+        echo "vmess ${existing_uuid}" >"${vmess_users_file}"
+    fi
+}
+
+vmess_user_list() {
+    vmess_users_ensure
+    echo -e "${OK} ${GreenBG} 当前 VMess 用户列表 ${Font}"
+    local idx=0
+    while read -r name uuid; do
+        [[ -z "${name}" ]] && continue
+        idx=$((idx + 1))
+        echo -e "${Green}${idx}.${Font} 名称: ${name}   UUID: ${uuid}"
+    done <"${vmess_users_file}"
+}
+
+vmess_user_add() {
+    if [[ ! -f ${v2ray_qr_config_file} ]]; then
+        echo -e "${Error} ${RedBG} V2Ray 未安装，请先安装 ${Font}"
+        return 1
+    fi
+    vmess_users_ensure
+    local next_num=1
+    while grep -q "^user${next_num} " "${vmess_users_file}"; do
+        next_num=$((next_num + 1))
+    done
+    read -rp "请输入用户名（default:user${next_num}）:" user_name
+    [[ -z "${user_name}" ]] && user_name="user${next_num}"
+    if [[ "${user_name}" =~ [[:space:]] ]]; then
+        echo -e "${Error} ${RedBG} 用户名不能包含空格 ${Font}"
+        return 1
+    fi
+    if grep -q "^${user_name} " "${vmess_users_file}"; then
+        echo -e "${Error} ${RedBG} 用户 ${user_name} 已存在 ${Font}"
+        return 1
+    fi
+    echo "${user_name} $(cat /proc/sys/kernel/random/uuid)" >>"${vmess_users_file}"
+    v2ray_conf_add
+    systemctl restart v2ray
+    judge "VMess 用户添加"
+    v2ray_config_output
+}
+
+vmess_user_del() {
+    if [[ ! -f ${v2ray_qr_config_file} ]]; then
+        echo -e "${Error} ${RedBG} V2Ray 未安装，请先安装 ${Font}"
+        return 1
+    fi
+    vmess_users_ensure
+    vmess_user_list
+    local count
+    count="$(wc -l <"${vmess_users_file}")"
+    if [[ "${count}" -le 1 ]]; then
+        echo -e "${Error} ${RedBG} 至少保留一个用户，无法删除 ${Font}"
+        return 1
+    fi
+    read -rp "请输入要删除的用户名:" del_name
+    [[ -z "${del_name}" ]] && return 1
+    if ! grep -q "^${del_name} " "${vmess_users_file}"; then
+        echo -e "${Error} ${RedBG} 用户 ${del_name} 不存在 ${Font}"
+        return 1
+    fi
+    sed -i "/^${del_name} /d" "${vmess_users_file}"
+    v2ray_conf_add
+    systemctl restart v2ray
+    judge "VMess 用户删除"
+    v2ray_config_output
+}
+
+vmess_user_uuid() {
+    if [[ ! -f ${v2ray_qr_config_file} ]]; then
+        echo -e "${Error} ${RedBG} V2Ray 未安装，请先安装 ${Font}"
+        return 1
+    fi
+    vmess_users_ensure
+    vmess_user_list
+    read -rp "请输入要更换 UUID 的用户名:" chg_name
+    [[ -z "${chg_name}" ]] && return 1
+    if ! grep -q "^${chg_name} " "${vmess_users_file}"; then
+        echo -e "${Error} ${RedBG} 用户 ${chg_name} 不存在 ${Font}"
+        return 1
+    fi
+    sed -i "s/^${chg_name} .*/${chg_name} $(cat /proc/sys/kernel/random/uuid)/" "${vmess_users_file}"
+    v2ray_conf_add
+    systemctl restart v2ray
+    judge "VMess 用户 UUID 更换"
+    v2ray_config_output
+}
+
+vmess_user_menu() {
+    if [[ ! -f ${v2ray_qr_config_file} ]]; then
+        echo -e "${Error} ${RedBG} V2Ray 未安装，请先安装 ${Font}"
+        return 1
+    fi
+    while true; do
+        echo -e "\t VMess 用户管理"
+        echo -e "${Green}1.${Font} 查看用户列表"
+        echo -e "${Green}2.${Font} 添加用户"
+        echo -e "${Green}3.${Font} 删除用户"
+        echo -e "${Green}4.${Font} 更换用户 UUID"
+        echo -e "${Green}5.${Font} 返回上级菜单 \n"
+        read -rp "请输入数字：" user_menu_num
+        case ${user_menu_num} in
+        1)
+            vmess_user_list
+            ;;
+        2)
+            vmess_user_add
+            ;;
+        3)
+            vmess_user_del
+            ;;
+        4)
+            vmess_user_uuid
+            ;;
+        5)
+            break
+            ;;
+        *)
+            echo -e "${RedBG}请输入正确的数字${Font}"
+            ;;
+        esac
+    done
+}
+
+v2ray_conf_add() {
+    vmess_users_ensure
+    local clients_json="" name uuid first=1
+    while read -r name uuid; do
+        [[ -z "${name}" ]] && continue
+        if [[ ${first} -eq 1 ]]; then first=0; else clients_json="${clients_json},"; fi
+        clients_json="${clients_json}{\"id\":\"${uuid}\",\"alterId\":0,\"email\":\"${name}\"}"
+    done <"${vmess_users_file}"
+    [[ -z "${clients_json}" ]] && clients_json="{\"id\":\"$(cat /proc/sys/kernel/random/uuid)\",\"alterId\":0,\"email\":\"vmess\"}"
+
+    local ws_path="${camouflage}"
+    [[ -f "${v2ray_qr_config_file}" ]] && ws_path="$(grep '\"path\"' "${v2ray_qr_config_file}" | awk -F '"' '{print $4}')"
+    camouflage="${ws_path}"
+
+    local inbound_port=""
+    if [[ -f "${v2ray_conf}" ]]; then
+        inbound_port="$(grep '\"port\"' "${v2ray_conf}" | head -1 | awk -F ':' '{print $2}' | tr -d ' ,')"
+    fi
+    [[ -z "${inbound_port}" ]] && inbound_port=$((RANDOM + 10000))
+    PORT="${inbound_port}"
+
+    cat >${v2ray_conf} <<EOF
+{
+  "log": {
+    "access": "/var/log/v2ray/access.log",
+    "error": "/var/log/v2ray/error.log",
+    "loglevel": "warning"
+  },
+  "inbounds": [
+    {
+      "port": ${PORT},
+      "listen": "127.0.0.1",
+      "tag": "vmess-in",
+      "protocol": "vmess",
+      "settings": {
+        "clients": [
+          ${clients_json}
+        ]
+      },
+      "streamSettings": {
+        "network": "ws",
+        "wsSettings": {
+          "path": "${camouflage}"
+        }
+      }
+    }
+  ],
+  "outbounds": [
+    { "protocol": "freedom", "settings": {}, "tag": "direct" },
+    { "protocol": "blackhole", "settings": {}, "tag": "blocked" }
+  ],
+  "dns": {
+    "servers": [
+      "https+local://1.1.1.1/dns-query",
+      "1.1.1.1",
+      "1.0.0.1",
+      "8.8.8.8",
+      "8.8.4.4",
+      "localhost"
+    ]
+  },
+  "routing": {
+    "domainStrategy": "AsIs",
+    "rules": [
+      {
+        "type": "field",
+        "inboundTag": ["vmess-in"],
+        "outboundTag": "direct"
+      }
+    ]
+  }
+}
+EOF
+    judge "V2Ray 配置写入"
 }
 
 old_config_exist_check() {
@@ -1174,15 +1347,27 @@ acme_cron_update() {
     judge "cron 计划任务更新"
 }
 
-vmess_qr_config_tls_ws() {
+vmess_link_gen() {
+    local ps="$1" id="$2" add="$3" port="$4" path="$5"
+    local json
+    json="{\"v\":\"2\",\"ps\":\"${ps}\",\"add\":\"${add}\",\"port\":\"${port}\",\"id\":\"${id}\",\"aid\":\"0\",\"net\":\"ws\",\"type\":\"none\",\"host\":\"${add}\",\"path\":\"${path}\",\"tls\":\"tls\"}"
+    echo -n "${json}" | base64 -w 0
+}
+
+vmess_node_conf() {
+    vmess_users_ensure
+    local ps="vmess_${domain}" first_id=""
+    local first_line
+    first_line="$(head -1 "${vmess_users_file}")"
+    [[ -n "${first_line}" ]] && read -r ps first_id <<<"${first_line}"
     cat >$v2ray_qr_config_file <<-EOF
 {
   "v": "2",
-  "ps": "wulabing_${domain}",
+  "ps": "${ps}",
   "add": "${domain}",
   "port": "${port}",
-  "id": "${UUID}",
-  "aid": "${alterID}",
+  "id": "${first_id}",
+  "aid": "0",
   "net": "ws",
   "type": "none",
   "host": "${domain}",
@@ -1201,20 +1386,24 @@ v2ray_config_output() {
         echo -e "${Error} ${RedBG} V2Ray 未安装，请先安装 ${Font}"
         return 1
     fi
-    local vmess_link
-    vmess_link="vmess://$(base64 -w 0 ${v2ray_qr_config_file})"
+    vmess_users_ensure
+    local domain port path
+    domain="$(info_extraction '\"add\"')"
+    port="$(info_extraction '\"port\"')"
+    path="$(info_extraction '\"path\"')"
+
     {
         echo -e "${OK} ${GreenBG} V2Ray 配置信息 ${Font}"
-        echo -e "${Red} 地址（address）:${Font} $(info_extraction '\"add\"')"
-        echo -e "${Red} 端口（port）：${Font} $(info_extraction '\"port\"')"
-        echo -e "${Red} 用户id（UUID）：${Font} $(info_extraction '\"id\"')"
-        echo -e "${Red} 额外id（alterId）：${Font} $(info_extraction '\"aid\"')"
-        echo -e "${Red} 传输协议（network）：${Font} $(info_extraction '\"net\"')"
-        echo -e "${Red} 路径（path）：${Font} $(info_extraction '\"path\"')"
-        echo -e "${Red} 底层传输安全（tls）：${Font} tls"
+        echo -e "${Red} 地址（address）:${Font} ${domain}"
+        echo -e "${Red} 端口（port）：${Font} ${port}"
+        echo -e "${Red} 路径（path）：${Font} ${path}"
         echo -e ""
-        echo -e "${Red} 导入链接 ${Font}"
-        echo -e "${vmess_link}"
+        while read -r name uuid; do
+            [[ -z "${name}" ]] && continue
+            echo -e "${Red} 用户：${name} ${Font}"
+            echo -e "${Red}  UUID：${Font} ${uuid}"
+            echo -e "${Red}  导入链接：${Font} vmess://$(vmess_link_gen "${name}" "${uuid}" "${domain}" "${port}" "${path}")"
+        done <"${vmess_users_file}"
     } >"${v2ray_info_file}"
 
     cat "${v2ray_info_file}"
@@ -1493,12 +1682,20 @@ install_v2ray_ws_tls() {
     port_exist_check 80
     port_exist_check "${port}"
     nginx_exist_check
-    v2ray_conf_add_tls
+    mkdir -p /etc/v2ray
+    if [[ "on" == "$old_config_status" ]] && [[ -f "$v2ray_qr_config_file" ]]; then
+        echo "vmess $(info_extraction '\"id\"')" >"${vmess_users_file}"
+    else
+        read -rp "请输入首个用户名（default:vmess）:" first_user
+        [[ -z "${first_user}" ]] && first_user="vmess"
+        echo "${first_user} $(cat /proc/sys/kernel/random/uuid)" >"${vmess_users_file}"
+    fi
+    v2ray_conf_add
     nginx_conf_add
     web_camouflage
     ssl_judge_and_install
     nginx_systemd
-    vmess_qr_config_tls_ws
+    vmess_node_conf
     tls_type
     v2ray_config_output
     start_process_systemd
@@ -1694,7 +1891,7 @@ install_menu() {
 v2ray_config_menu() {
     while true; do
         section_title "V2Ray 配置"
-        echo -e "${Green}1.${Font} 变更 UUID"
+        echo -e "${Green}1.${Font} 管理 VMess 用户"
         echo -e "${Green}2.${Font} 变更 端口"
         echo -e "${Green}3.${Font} 变更 TLS 版本(仅ws+tls有效)"
         echo -e "${Green}4.${Font} 变更 伪装路径"
@@ -1702,9 +1899,7 @@ v2ray_config_menu() {
         read -rp "请输入数字：" sub_num
         case ${sub_num} in
         1)
-            read -rp "请输入UUID:" UUID
-            modify_UUID
-            start_process_systemd
+            vmess_user_menu
             ;;
         2)
             read -rp "请输入连接端口:" port
