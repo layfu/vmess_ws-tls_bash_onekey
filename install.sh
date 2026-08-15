@@ -31,7 +31,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.2.1"
+shell_version="1.6.3.0"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -62,6 +62,9 @@ singbox_systemd_file="/etc/systemd/system/sing-box.service"
 anytls_info_file="$HOME/anytls_info.inf"
 anytls_domain_file="/etc/sing-box/domain"
 anytls_users_file="/etc/sing-box/users"
+anytls_routing_conf_file="/etc/sing-box/routing.conf"
+anytls_block_domains_file="/etc/sing-box/block_domains"
+anytls_block_ips_file="/etc/sing-box/block_ips"
 anytls_port=""
 amce_sh_file="/root/.acme.sh/acme.sh"
 ssl_update_file="/usr/bin/ssl_update.sh"
@@ -756,6 +759,342 @@ anytls_user_menu() {
     done
 }
 
+anytls_routing_load() {
+    anytls_block_cn=0
+    anytls_block_ads=0
+    anytls_block_bt=1
+    if [[ -f "${anytls_routing_conf_file}" ]]; then
+        anytls_block_cn="$(grep '^block_cn=' "${anytls_routing_conf_file}" | head -1 | cut -d= -f2)"
+        anytls_block_ads="$(grep '^block_ads=' "${anytls_routing_conf_file}" | head -1 | cut -d= -f2)"
+        anytls_block_bt="$(grep '^block_bt=' "${anytls_routing_conf_file}" | head -1 | cut -d= -f2)"
+    fi
+    [[ -z "${anytls_block_cn}" ]] && anytls_block_cn=0
+    [[ -z "${anytls_block_ads}" ]] && anytls_block_ads=0
+    [[ -z "${anytls_block_bt}" ]] && anytls_block_bt=1
+}
+
+anytls_routing_save() {
+    mkdir -p "${singbox_conf_dir}"
+    cat >"${anytls_routing_conf_file}" <<EOF
+block_cn=${anytls_block_cn}
+block_ads=${anytls_block_ads}
+block_bt=${anytls_block_bt}
+EOF
+}
+
+_anytls_rules_first=1
+ANYTLS_ROUTING_RULES=""
+
+_anytls_rules_append() {
+    if [[ ${_anytls_rules_first} -eq 1 ]]; then
+        _anytls_rules_first=0
+        ANYTLS_ROUTING_RULES="$1"
+    else
+        ANYTLS_ROUTING_RULES="${ANYTLS_ROUTING_RULES},$1"
+    fi
+}
+
+anytls_routing_rules_gen() {
+    ANYTLS_ROUTING_RULES=""
+    _anytls_rules_first=1
+
+    if [[ "${anytls_block_bt}" == "1" ]]; then
+        _anytls_rules_append '{"action":"sniff"}'
+        _anytls_rules_append '{"protocol":"bittorrent","outbound":"block"}'
+    fi
+    if [[ "${anytls_block_ads}" == "1" ]]; then
+        _anytls_rules_append '{"rule_set":"geosite-category-ads","outbound":"block"}'
+    fi
+    if [[ "${anytls_block_cn}" == "1" ]]; then
+        _anytls_rules_append '{"rule_set":"geosite-cn","outbound":"block"}'
+        _anytls_rules_append '{"rule_set":"geoip-cn","outbound":"block"}'
+    fi
+
+    local domains_json="" d first_d=1
+    if [[ -f "${anytls_block_domains_file}" ]]; then
+        while read -r d; do
+            [[ -z "${d}" ]] && continue
+            if [[ ${first_d} -eq 1 ]]; then first_d=0; else domains_json="${domains_json},"; fi
+            domains_json="${domains_json}\"${d}\""
+        done <"${anytls_block_domains_file}"
+    fi
+    [[ -n "${domains_json}" ]] && _anytls_rules_append "{\"domain_suffix\":[${domains_json}],\"outbound\":\"block\"}"
+
+    local ips_json="" ip first_i=1
+    if [[ -f "${anytls_block_ips_file}" ]]; then
+        while read -r ip; do
+            [[ -z "${ip}" ]] && continue
+            if [[ ${first_i} -eq 1 ]]; then first_i=0; else ips_json="${ips_json},"; fi
+            ips_json="${ips_json}\"${ip}\""
+        done <"${anytls_block_ips_file}"
+    fi
+    [[ -n "${ips_json}" ]] && _anytls_rules_append "{\"ip_cidr\":[${ips_json}],\"outbound\":\"block\"}"
+
+    echo "${ANYTLS_ROUTING_RULES}"
+}
+
+_anytls_rs_first=1
+ANYTLS_ROUTING_RULESET=""
+
+_anytls_rs_append() {
+    if [[ ${_anytls_rs_first} -eq 1 ]]; then
+        _anytls_rs_first=0
+        ANYTLS_ROUTING_RULESET="$1"
+    else
+        ANYTLS_ROUTING_RULESET="${ANYTLS_ROUTING_RULESET},$1"
+    fi
+}
+
+anytls_routing_rule_set_gen() {
+    ANYTLS_ROUTING_RULESET=""
+    _anytls_rs_first=1
+    if [[ "${anytls_block_ads}" == "1" ]]; then
+        _anytls_rs_append "{\"type\":\"local\",\"tag\":\"geosite-category-ads\",\"format\":\"binary\",\"path\":\"${singbox_conf_dir}/geosite-category-ads.srs\"}"
+    fi
+    if [[ "${anytls_block_cn}" == "1" ]]; then
+        _anytls_rs_append "{\"type\":\"local\",\"tag\":\"geosite-cn\",\"format\":\"binary\",\"path\":\"${singbox_conf_dir}/geosite-cn.srs\"}"
+        _anytls_rs_append "{\"type\":\"local\",\"tag\":\"geoip-cn\",\"format\":\"binary\",\"path\":\"${singbox_conf_dir}/geoip-cn.srs\"}"
+    fi
+    echo "${ANYTLS_ROUTING_RULESET}"
+}
+
+singbox_geodata_download() {
+    mkdir -p "${singbox_conf_dir}"
+    local base_geosite="https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set"
+    local base_geoip="https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set"
+    local f
+    for f in geosite-category-ads geosite-cn; do
+        if ! curl -L -q --retry 5 --retry-delay 10 --retry-max-time 60 \
+            -o "${singbox_conf_dir}/${f}.srs" "${base_geosite}/${f}.srs"; then
+            echo -e "${Error} ${RedBG} ${f}.srs 下载失败 ${Font}"
+            return 1
+        fi
+    done
+    if ! curl -L -q --retry 5 --retry-delay 10 --retry-max-time 60 \
+        -o "${singbox_conf_dir}/geoip-cn.srs" "${base_geoip}/geoip-cn.srs"; then
+        echo -e "${Error} ${RedBG} geoip-cn.srs 下载失败 ${Font}"
+        return 1
+    fi
+    judge "sing-box geodata 下载"
+}
+
+anytls_routing_ensure_geodata() {
+    local f missing=0
+    if [[ "${anytls_block_ads}" == "1" ]]; then
+        [[ -f "${singbox_conf_dir}/geosite-category-ads.srs" ]] || missing=1
+    fi
+    if [[ "${anytls_block_cn}" == "1" ]]; then
+        [[ -f "${singbox_conf_dir}/geosite-cn.srs" ]] || missing=1
+        [[ -f "${singbox_conf_dir}/geoip-cn.srs" ]] || missing=1
+    fi
+    [[ ${missing} -eq 1 ]] && singbox_geodata_download
+}
+
+singbox_geodata_update() {
+    if [[ ! -f "${singbox_bin_dir}" ]]; then
+        echo -e "${Error} ${RedBG} sing-box 未安装，请先安装 AnyTLS ${Font}"
+        return 1
+    fi
+    singbox_geodata_download
+}
+
+anytls_block_domain_list() {
+    echo -e "${OK} ${GreenBG} 当前屏蔽域名列表 ${Font}"
+    if [[ ! -f "${anytls_block_domains_file}" ]] || [[ ! -s "${anytls_block_domains_file}" ]]; then
+        echo -e "${Red} 无 ${Font}"
+        return 0
+    fi
+    local idx=0
+    while read -r d; do
+        [[ -z "${d}" ]] && continue
+        idx=$((idx + 1))
+        echo -e "${Green}${idx}.${Font} ${d}"
+    done <"${anytls_block_domains_file}"
+}
+
+anytls_block_domain_add() {
+    read -rp "请输入要屏蔽的域名（eg: example.com）:" domain_item
+    [[ -z "${domain_item}" ]] && return 1
+    if [[ "${domain_item}" =~ [[:space:]] ]]; then
+        echo -e "${Error} ${RedBG} 域名不能包含空格 ${Font}"
+        return 1
+    fi
+    mkdir -p "${singbox_conf_dir}"
+    echo "${domain_item}" >>"${anytls_block_domains_file}"
+    anytls_conf_add
+    systemctl restart sing-box
+    judge "屏蔽域名添加"
+}
+
+anytls_block_domain_del() {
+    if [[ ! -s "${anytls_block_domains_file}" ]]; then
+        echo -e "${Error} ${RedBG} 屏蔽域名列表为空 ${Font}"
+        return 1
+    fi
+    anytls_block_domain_list
+    read -rp "请输入要删除的域名:" del_domain
+    [[ -z "${del_domain}" ]] && return 1
+    sed -i "/^${del_domain}$/d" "${anytls_block_domains_file}"
+    anytls_conf_add
+    systemctl restart sing-box
+    judge "屏蔽域名删除"
+}
+
+anytls_block_ip_list() {
+    echo -e "${OK} ${GreenBG} 当前屏蔽 IP 列表 ${Font}"
+    if [[ ! -f "${anytls_block_ips_file}" ]] || [[ ! -s "${anytls_block_ips_file}" ]]; then
+        echo -e "${Red} 无 ${Font}"
+        return 0
+    fi
+    local idx=0
+    while read -r ip_item; do
+        [[ -z "${ip_item}" ]] && continue
+        idx=$((idx + 1))
+        echo -e "${Green}${idx}.${Font} ${ip_item}"
+    done <"${anytls_block_ips_file}"
+}
+
+anytls_block_ip_add() {
+    read -rp "请输入要屏蔽的 IP 或 CIDR（eg: 1.2.3.4 或 10.0.0.0/8）:" ip_item
+    [[ -z "${ip_item}" ]] && return 1
+    if [[ "${ip_item}" =~ [[:space:]] ]]; then
+        echo -e "${Error} ${RedBG} IP 不能包含空格 ${Font}"
+        return 1
+    fi
+    mkdir -p "${singbox_conf_dir}"
+    echo "${ip_item}" >>"${anytls_block_ips_file}"
+    anytls_conf_add
+    systemctl restart sing-box
+    judge "屏蔽 IP 添加"
+}
+
+anytls_block_ip_del() {
+    if [[ ! -s "${anytls_block_ips_file}" ]]; then
+        echo -e "${Error} ${RedBG} 屏蔽 IP 列表为空 ${Font}"
+        return 1
+    fi
+    anytls_block_ip_list
+    read -rp "请输入要删除的 IP 或 CIDR:" del_ip
+    [[ -z "${del_ip}" ]] && return 1
+    sed -i "/^${del_ip}$/d" "${anytls_block_ips_file}"
+    anytls_conf_add
+    systemctl restart sing-box
+    judge "屏蔽 IP 删除"
+}
+
+anytls_block_domain_menu() {
+    while true; do
+        echo -e "\t 禁止自定义域名"
+        echo -e "${Green}1.${Font} 查看屏蔽域名列表"
+        echo -e "${Green}2.${Font} 添加屏蔽域名"
+        echo -e "${Green}3.${Font} 删除屏蔽域名"
+        echo -e "${Green}0.${Font} 返回上级菜单 \n"
+        read -rp "请输入数字：" bd_num
+        case ${bd_num} in
+        1)
+            anytls_block_domain_list
+            ;;
+        2)
+            anytls_block_domain_add
+            ;;
+        3)
+            anytls_block_domain_del
+            ;;
+        0)
+            break
+            ;;
+        *)
+            echo -e "${RedBG}请输入正确的数字${Font}"
+            ;;
+        esac
+    done
+}
+
+anytls_block_ip_menu() {
+    while true; do
+        echo -e "\t 禁止自定义 IP"
+        echo -e "${Green}1.${Font} 查看屏蔽 IP 列表"
+        echo -e "${Green}2.${Font} 添加屏蔽 IP"
+        echo -e "${Green}3.${Font} 删除屏蔽 IP"
+        echo -e "${Green}0.${Font} 返回上级菜单 \n"
+        read -rp "请输入数字：" bi_num
+        case ${bi_num} in
+        1)
+            anytls_block_ip_list
+            ;;
+        2)
+            anytls_block_ip_add
+            ;;
+        3)
+            anytls_block_ip_del
+            ;;
+        0)
+            break
+            ;;
+        *)
+            echo -e "${RedBG}请输入正确的数字${Font}"
+            ;;
+        esac
+    done
+}
+
+anytls_routing_menu() {
+    if [[ ! -f "${singbox_conf}" ]]; then
+        echo -e "${Error} ${RedBG} AnyTLS 未安装，请先安装 ${Font}"
+        return 1
+    fi
+    while true; do
+        anytls_routing_load
+        local cn_s="关" ads_s="关" bt_s="关"
+        [[ "${anytls_block_cn}" == "1" ]] && cn_s="开"
+        [[ "${anytls_block_ads}" == "1" ]] && ads_s="开"
+        [[ "${anytls_block_bt}" == "1" ]] && bt_s="开"
+        echo -e "\t 路由规则（屏蔽）"
+        echo -e "${Green}1.${Font} 禁止国内地址  [${cn_s}]"
+        echo -e "${Green}2.${Font} 禁止广告地址  [${ads_s}]"
+        echo -e "${Green}3.${Font} 禁止 BT 协议  [${bt_s}]"
+        echo -e "${Green}4.${Font} 禁止自定义域名"
+        echo -e "${Green}5.${Font} 禁止自定义 IP"
+        echo -e "${Green}0.${Font} 返回上级菜单 \n"
+        read -rp "请输入数字：" routing_num
+        case ${routing_num} in
+        1)
+            if [[ "${anytls_block_cn}" == "1" ]]; then anytls_block_cn=0; else anytls_block_cn=1; fi
+            anytls_routing_save
+            anytls_conf_add
+            systemctl restart sing-box
+            judge "禁止国内地址 切换"
+            ;;
+        2)
+            if [[ "${anytls_block_ads}" == "1" ]]; then anytls_block_ads=0; else anytls_block_ads=1; fi
+            anytls_routing_save
+            anytls_conf_add
+            systemctl restart sing-box
+            judge "禁止广告地址 切换"
+            ;;
+        3)
+            if [[ "${anytls_block_bt}" == "1" ]]; then anytls_block_bt=0; else anytls_block_bt=1; fi
+            anytls_routing_save
+            anytls_conf_add
+            systemctl restart sing-box
+            judge "禁止 BT 协议 切换"
+            ;;
+        4)
+            anytls_block_domain_menu
+            ;;
+        5)
+            anytls_block_ip_menu
+            ;;
+        0)
+            break
+            ;;
+        *)
+            echo -e "${RedBG}请输入正确的数字${Font}"
+            ;;
+        esac
+    done
+}
+
 anytls_conf_add() {
     anytls_users_ensure
     local users_json="" name password first=1
@@ -771,6 +1110,12 @@ anytls_conf_add() {
 
     [[ -z "${anytls_port}" ]] && anytls_port="$(grep '\"listen_port\"' "${singbox_conf}" 2>/dev/null | awk -F ':' '{print $2}' | tr -d ' ,')"
     [[ -z "${anytls_port}" ]] && anytls_port="8443"
+
+    anytls_routing_load
+    anytls_routing_ensure_geodata
+    local routing_rules_json rule_set_json
+    routing_rules_json="$(anytls_routing_rules_gen)"
+    rule_set_json="$(anytls_routing_rule_set_gen)"
 
     cat >${singbox_conf} <<EOF
 {
@@ -805,6 +1150,12 @@ anytls_conf_add() {
     }
   ],
   "route": {
+    "rule_set": [
+      ${rule_set_json}
+    ],
+    "rules": [
+      ${routing_rules_json}
+    ],
     "final": "direct"
   }
 }
@@ -2134,6 +2485,9 @@ list() {
     singbox_update)
         singbox_update
         ;;
+    singbox_geodata_update)
+        singbox_geodata_update
+        ;;
     *)
         menu
         ;;
@@ -2299,6 +2653,7 @@ anytls_config_menu() {
         section_title "AnyTLS 配置"
         echo -e "${Green}1.${Font} 管理 AnyTLS 用户"
         echo -e "${Green}2.${Font} 变更 AnyTLS 端口"
+        echo -e "${Green}3.${Font} 路由规则"
         echo -e "${Green}0.${Font} 返回上级菜单 \n"
         read -rp "请输入数字：" sub_num
         case ${sub_num} in
@@ -2307,6 +2662,9 @@ anytls_config_menu() {
             ;;
         2)
             anytls_port_change
+            ;;
+        3)
+            anytls_routing_menu
             ;;
         0)
             break
@@ -2389,7 +2747,8 @@ other_menu() {
         section_title "其他"
         echo -e "${Green}1.${Font} 卸载"
         echo -e "${Green}2.${Font} 更新 geoip.dat 和 geosite.dat"
-        echo -e "${Green}3.${Font} 升级 脚本"
+        echo -e "${Green}3.${Font} 更新 sing-box 规则集"
+        echo -e "${Green}4.${Font} 升级 脚本"
         echo -e "${Green}0.${Font} 返回上级菜单 \n"
         read -rp "请输入数字：" sub_num
         case ${sub_num} in
@@ -2401,6 +2760,9 @@ other_menu() {
             update_dat
             ;;
         3)
+            singbox_geodata_update
+            ;;
+        4)
             update_sh
             ;;
         0)
