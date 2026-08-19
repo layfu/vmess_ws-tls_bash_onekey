@@ -31,7 +31,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.3.0"
+shell_version="1.6.4.0"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -2488,11 +2488,410 @@ list() {
     singbox_geodata_update)
         singbox_geodata_update
         ;;
+    nginx_update)
+        nginx_upgrade
+        ;;
     *)
         menu
         ;;
     esac
 }
+nginx_upgrade_is_root() {
+    if [[ 0 != "$UID" ]]; then
+        echo -e "${Error} ${RedBG} 当前用户不是root用户，请切换到root用户后重新执行脚本 ${Font}"
+        exit 1
+    fi
+}
+
+nginx_upgrade_ensure_deps() {
+    if [[ "${ID}" == "centos" ]]; then
+        INS="yum"
+    else
+        INS="apt"
+    fi
+
+    command -v wget >/dev/null 2>&1 || ${INS} -y install wget
+    command -v make >/dev/null 2>&1 || {
+        if [[ "${ID}" == "centos" ]]; then
+            ${INS} -y groupinstall "Development tools"
+        else
+            ${INS} -y install build-essential
+        fi
+    }
+
+    if [[ "${ID}" == "centos" ]]; then
+        ${INS} -y install pcre2-devel zlib-devel epel-release
+    else
+        ${INS} -y install libpcre2-dev zlib1g-dev
+    fi
+}
+
+nginx_upgrade_check_mode() {
+    local nginx_sbin="${nginx_dir}/sbin/nginx"
+    if [[ ! -f "$nginx_sbin" ]]; then
+        echo -e "${Error} ${RedBG} 未检测到 Nginx (${nginx_sbin})，请确认已通过 ws+tls 模式安装 ${Font}"
+        exit 1
+    fi
+    if [[ ! -f "$nginx_conf" ]]; then
+        echo -e "${Error} ${RedBG} 未检测到 v2ray.conf (${nginx_conf})，请确认已通过 ws+tls 模式安装 ${Font}"
+        exit 1
+    fi
+    echo -e "${OK} ${GreenBG} 检测到 ws+tls 模式安装，进入 Nginx 升级流程 ${Font}"
+}
+
+nginx_upgrade_show_version() {
+    local nginx_sbin="${nginx_dir}/sbin/nginx"
+    current_nginx=$("$nginx_sbin" -v 2>&1 | awk -F '/' '{print $NF}')
+    current_openssl=$("$nginx_sbin" -V 2>&1 | grep -oE 'built with OpenSSL [0-9]+\.[0-9]+\.[0-9]+[a-z]?' | head -1 | awk '{print $NF}')
+    echo -e "${Green}当前 Nginx 版本: ${Red}${current_nginx}${Font}"
+    echo -e "${Green}当前 OpenSSL 版本: ${Red}${current_openssl:-无法检测}${Font}"
+    echo -e "${Green}当前 Jemalloc 版本: ${Red}未知 (默认安装为 5.3.1)${Font}"
+    echo ""
+}
+
+nginx_upgrade_check_modules() {
+    local load_mods
+    load_mods=$(grep -rn "load_module" "${nginx_dir}/conf/" 2>/dev/null)
+    if [[ -n "$load_mods" ]]; then
+        echo -e "${RedBG}检测到 load_module 动态模块依赖:${Font}"
+        echo "$load_mods"
+        echo ""
+        echo -e "${Red}说明: 动态模块(.so)与 Nginx 版本/ABI 严格绑定，升级二进制后这些模块可能加载失败，${Font}"
+        echo -e "${Red}导致 Nginx 无法启动。${Font}"
+        echo ""
+        read -rp "是否仍要继续升级? [y/N]: " module_confirm
+        [[ -z "$module_confirm" ]] && module_confirm="N"
+        case $module_confirm in
+            [yY][eE][sS] | [yY])
+                echo -e "${Green}确认继续${Font}"
+                sleep 1
+                ;;
+            *)
+                echo -e "${RedBG} 已取消 ${Font}"
+                exit 0
+                ;;
+        esac
+    else
+        echo -e "${OK} ${GreenBG} 未检测到动态模块依赖 ${Font}"
+    fi
+}
+
+nginx_upgrade_check_conflicts() {
+    echo -e "${GreenBG}>>> 环境冲突检测 <<<${Font}"
+    echo ""
+    local has_conflict=0
+
+    if [[ "${ID}" == "centos" ]]; then
+        if rpm -qa 2>/dev/null | grep -q '^nginx-'; then
+            echo -e "${Red}[冲突] 检测到通过 yum/dnf 安装的 Nginx 包，升级可能覆盖其二进制与默认配置${Font}"
+            has_conflict=1
+        fi
+    else
+        if dpkg -l nginx nginx-full nginx-light nginx-extras nginx-common 2>/dev/null | grep -q '^ii'; then
+            echo -e "${Red}[冲突] 检测到通过 apt 安装的 Nginx 包，升级可能覆盖其二进制与默认配置${Font}"
+            has_conflict=1
+        fi
+    fi
+
+    if [[ -d "$nginx_conf_dir" ]]; then
+        local other_confs
+        other_confs=$(ls "$nginx_conf_dir"/*.conf 2>/dev/null | grep -v 'v2ray.conf$')
+        if [[ -n "$other_confs" ]]; then
+            echo -e "${Red}[提示] conf.d/ 下存在其他站点配置，升级过程会短暂中断这些站点:${Font}"
+            echo "$other_confs"
+            echo -e "${Green}        这些配置会被完整保留并备份。${Font}"
+        fi
+    fi
+
+    for svc in apache2 httpd caddy lighttpd; do
+        if systemctl is-active "$svc" &>/dev/null; then
+            echo -e "${Red}[冲突] 检测到其他 Web 服务正在运行: ${svc}${Font}"
+            has_conflict=1
+        fi
+    done
+
+    local nginx_was_running=""
+    if systemctl is-active nginx &>/dev/null; then
+        systemctl stop nginx 2>/dev/null
+        nginx_was_running="1"
+    fi
+    sleep 1
+    for port in 80 443; do
+        local occupied proc_name
+        occupied=$(ss -tlnp 2>/dev/null | grep ":${port} " | head -1)
+        if [[ -n "$occupied" ]]; then
+            proc_name=$(echo "$occupied" | awk '{print $NF}')
+            echo -e "${Red}[冲突] 端口 ${port} 被占用 (${proc_name:-unknown})${Font}"
+            has_conflict=1
+        fi
+    done
+    if [[ "$nginx_was_running" == "1" ]]; then
+        systemctl start nginx 2>/dev/null
+    fi
+
+    echo ""
+    if [[ "$has_conflict" -eq 1 ]]; then
+        echo -e "${RedBG}检测到以上冲突项，升级可能影响服务器上的其他服务${Font}"
+        echo ""
+        read -rp "是否仍要继续升级? [y/N]: " conflict_confirm
+        [[ -z "$conflict_confirm" ]] && conflict_confirm="N"
+        case $conflict_confirm in
+            [yY][eE][sS] | [yY])
+                echo -e "${Green}确认继续${Font}"
+                sleep 1
+                ;;
+            *)
+                echo -e "${RedBG} 已取消 ${Font}"
+                exit 0
+                ;;
+        esac
+    else
+        echo -e "${OK} ${GreenBG} 未检测到冲突，可以安全升级 ${Font}"
+        echo ""
+        sleep 1
+    fi
+}
+
+nginx_upgrade_input() {
+    echo -e "${GreenBG}请输入要升级到的目标版本号，留空则跳过该项升级${Font}"
+    echo ""
+
+    read -rp "Nginx 目标版本 (如 1.30.4，留空跳过): " new_nginx
+    read -rp "OpenSSL 目标版本 (如 3.5.7，留空跳过): " new_openssl
+    read -rp "Jemalloc 目标版本 (如 5.3.1，留空跳过): " new_jemalloc
+
+    if [[ -z "$new_nginx" && -z "$new_openssl" && -z "$new_jemalloc" ]]; then
+        echo -e "${Error} ${RedBG} 未指定任何升级项，退出 ${Font}"
+        exit 0
+    fi
+
+    if [[ -z "$new_nginx" ]] && [[ -n "$new_openssl" || -n "$new_jemalloc" ]]; then
+        new_nginx="${current_nginx}"
+        echo -e "${Green}[提示] OpenSSL/Jemalloc 静态编译于 Nginx，将使用当前 Nginx 版本 ${current_nginx} 重新编译以使其生效 ${Font}"
+    fi
+
+    openssl_for_nginx=""
+    if [[ -n "$new_openssl" ]]; then
+        openssl_for_nginx="$new_openssl"
+    elif [[ -n "$current_openssl" ]]; then
+        openssl_for_nginx="$current_openssl"
+    fi
+
+    if [[ -n "$new_nginx" ]]; then
+        if [[ -z "$openssl_for_nginx" ]]; then
+            echo -e "${Error} ${RedBG} 升级 Nginx 需要一份 OpenSSL 源码作为编译依赖，请输入 OpenSSL 版本号 ${Font}"
+            read -rp "OpenSSL 目标版本: " openssl_for_nginx
+            [[ -z "$openssl_for_nginx" ]] && exit 1
+        fi
+    fi
+
+    echo ""
+    echo -e "${Green}========== 升级计划 ==========${Font}"
+    if [[ -n "$new_nginx" ]]; then
+        if [[ "$new_nginx" == "$current_nginx" ]]; then
+            echo -e "  Nginx:    ${current_nginx}  ${Red}(重建)${Font}"
+        else
+            echo -e "  Nginx:    ${current_nginx}  ->  ${Red}${new_nginx}${Font}"
+        fi
+    fi
+    [[ -n "$new_openssl" ]] && echo -e "  OpenSSL:  ${current_openssl:-N/A}  ->  ${Red}${new_openssl}${Font}"
+    [[ -n "$new_jemalloc" ]] && echo -e "  Jemalloc: 未知  ->  ${Red}${new_jemalloc}${Font}"
+    echo -e "${Green}===============================${Font}"
+    echo ""
+
+    read -rp "确认升级? [Y/n]: " confirm
+    [[ -z "$confirm" ]] && confirm="Y"
+    case $confirm in
+        [yY][eE][sS] | [yY])
+            ;;
+        *)
+            echo -e "${RedBG} 已取消 ${Font}"
+            exit 0
+            ;;
+    esac
+}
+
+nginx_upgrade_backup() {
+    nginx_upgrade_backup_dir="/tmp/nginx_upgrade_backup_$(date +%Y%m%d_%H%M%S)"
+    mkdir -p "$nginx_upgrade_backup_dir"
+    cp -a "${nginx_dir}/conf" "${nginx_upgrade_backup_dir}/conf" 2>/dev/null
+    [[ -d "${nginx_dir}/html" ]] && cp -a "${nginx_dir}/html" "${nginx_upgrade_backup_dir}/html" 2>/dev/null
+    cp -a "${nginx_dir}/sbin/nginx" "${nginx_upgrade_backup_dir}/nginx" 2>/dev/null
+    judge "Nginx 配置与二进制备份"
+    echo -e "${Green}备份目录: ${nginx_upgrade_backup_dir}${Font}"
+    sleep 1
+}
+
+nginx_upgrade_download() {
+    cd "$nginx_openssl_src" || exit 1
+
+    if [[ -n "$new_nginx" ]]; then
+        echo -e "${GreenBG}下载 Nginx ${new_nginx} ...${Font}"
+        wget -nc --no-check-certificate "http://nginx.org/download/nginx-${new_nginx}.tar.gz" -P "$nginx_openssl_src"
+        judge "Nginx 下载"
+    fi
+
+    local ossl_ver="${new_openssl:-$openssl_for_nginx}"
+    if [[ -n "$ossl_ver" ]]; then
+        echo -e "${GreenBG}下载 OpenSSL ${ossl_ver} ...${Font}"
+        if ! wget -nc --no-check-certificate "https://www.openssl.org/source/openssl-${ossl_ver}.tar.gz" -P "$nginx_openssl_src"; then
+            local ossl_major_minor
+            ossl_major_minor=$(echo "$ossl_ver" | awk -F. '{print $1"."$2}')
+            echo -e "${Green}[提示] 主源下载失败，尝试旧版本目录 /source/old/${ossl_major_minor}/ ...${Font}"
+            wget -nc --no-check-certificate "https://www.openssl.org/source/old/${ossl_major_minor}/openssl-${ossl_ver}.tar.gz" -P "$nginx_openssl_src" || {
+                echo -e "${Error} ${RedBG} OpenSSL 下载失败，请手动下载至 ${nginx_openssl_src} 后重试 ${Font}"
+                exit 1
+            }
+        fi
+        judge "OpenSSL 下载"
+    fi
+
+    if [[ -n "$new_jemalloc" ]]; then
+        echo -e "${GreenBG}下载 Jemalloc ${new_jemalloc} ...${Font}"
+        wget -nc --no-check-certificate "https://github.com/jemalloc/jemalloc/releases/download/${new_jemalloc}/jemalloc-${new_jemalloc}.tar.bz2" -P "$nginx_openssl_src"
+        judge "Jemalloc 下载"
+    fi
+}
+
+nginx_upgrade_extract() {
+    cd "$nginx_openssl_src" || exit 1
+
+    if [[ -n "$new_nginx" ]]; then
+        [[ -d "nginx-${new_nginx}" ]] && rm -rf "nginx-${new_nginx}"
+        tar -zxvf "nginx-${new_nginx}.tar.gz" >/dev/null 2>&1
+    fi
+
+    local ossl_ver="${new_openssl:-$openssl_for_nginx}"
+    if [[ -n "$ossl_ver" ]]; then
+        [[ -d "openssl-${ossl_ver}" ]] && rm -rf "openssl-${ossl_ver}"
+        tar -zxvf "openssl-${ossl_ver}.tar.gz" >/dev/null 2>&1
+    fi
+
+    if [[ -n "$new_jemalloc" ]]; then
+        [[ -d "jemalloc-${new_jemalloc}" ]] && rm -rf "jemalloc-${new_jemalloc}"
+        tar -xvf "jemalloc-${new_jemalloc}.tar.bz2" >/dev/null 2>&1
+    fi
+    echo -e "${OK} ${GreenBG} 源码解压完成 ${Font}"
+}
+
+nginx_upgrade_compile_jemalloc() {
+    if [[ -z "$new_jemalloc" ]]; then
+        return
+    fi
+    echo -e "${GreenBG}编译安装 Jemalloc ${new_jemalloc} ...${Font}"
+    sleep 2
+
+    cd "${nginx_openssl_src}/jemalloc-${new_jemalloc}" || exit 1
+    ./configure
+    judge "Jemalloc configure"
+    make -j "$THREAD" && make install
+    judge "Jemalloc 编译安装"
+    echo '/usr/local/lib' >/etc/ld.so.conf.d/local.conf
+    ldconfig
+}
+
+nginx_upgrade_compile_nginx() {
+    if [[ -z "$new_nginx" ]]; then
+        return
+    fi
+
+    local ossl_ver="${new_openssl:-$openssl_for_nginx}"
+    echo -e "${GreenBG}编译 Nginx ${new_nginx} (OpenSSL ${ossl_ver}) ...${Font}"
+    echo -e "${Green}过程稍久，请耐心等待${Font}"
+    sleep 4
+
+    cd "${nginx_openssl_src}/nginx-${new_nginx}" || exit 1
+
+    ./configure --prefix="${nginx_dir}" \
+        --with-http_ssl_module \
+        --with-http_sub_module \
+        --with-http_gzip_static_module \
+        --with-http_stub_status_module \
+        --with-http_realip_module \
+        --with-http_flv_module \
+        --with-http_mp4_module \
+        --with-http_secure_link_module \
+        --with-http_v2_module \
+        --with-cc-opt='-O3' \
+        --with-ld-opt="-ljemalloc" \
+        --with-openssl="../openssl-${ossl_ver}"
+    judge "Nginx configure"
+    make -j "$THREAD"
+    judge "Nginx 编译"
+}
+
+nginx_upgrade_swap() {
+    if [[ -z "$new_nginx" ]]; then
+        return
+    fi
+
+    local nginx_sbin="${nginx_dir}/sbin/nginx"
+    local src_bin="${nginx_openssl_src}/nginx-${new_nginx}/objs/nginx"
+
+    echo -e "${GreenBG}验证新编译的 Nginx 配置 ...${Font}"
+    if ! "${src_bin}" -t -c "${nginx_dir}/conf/nginx.conf"; then
+        echo -e "${Error} ${RedBG} 新 Nginx 配置测试失败，未替换二进制，旧版本保持不变 ${Font}"
+        exit 1
+    fi
+
+    echo -e "${GreenBG}替换 Nginx 二进制 ...${Font}"
+    systemctl stop nginx 2>/dev/null
+    sleep 1
+    if ! cp -f "$src_bin" "$nginx_sbin"; then
+        echo -e "${Error} ${RedBG} 替换二进制失败，尝试回滚 ${Font}"
+        cp -f "${nginx_upgrade_backup_dir}/nginx" "$nginx_sbin" 2>/dev/null
+        systemctl start nginx 2>/dev/null
+        exit 1
+    fi
+
+    systemctl start nginx 2>/dev/null
+    sleep 1
+    if ! systemctl is-active --quiet nginx; then
+        echo -e "${Error} ${RedBG} Nginx 启动失败，自动回滚旧版本 ${Font}"
+        cp -f "${nginx_upgrade_backup_dir}/nginx" "$nginx_sbin" 2>/dev/null
+        systemctl start nginx 2>/dev/null
+        echo -e "${Red}已回滚，旧 Nginx 运行状态请用 systemctl status nginx 确认 ${Font}"
+        exit 1
+    fi
+}
+
+nginx_upgrade_verify() {
+    local nginx_sbin="${nginx_dir}/sbin/nginx"
+    echo ""
+    echo "========== 升级后版本 =========="
+    "$nginx_sbin" -v 2>&1
+    echo "================================"
+    echo ""
+
+    echo -e "${GreenBG}升级完成！${Font}"
+    echo -e "备份目录: ${Green}${nginx_upgrade_backup_dir}${Font}"
+    echo -e "如需回滚: cp ${nginx_upgrade_backup_dir}/nginx ${nginx_dir}/sbin/nginx && systemctl restart nginx"
+
+    cd "$nginx_openssl_src" || return
+    [[ -n "$new_nginx" ]] && rm -rf "nginx-${new_nginx}" "nginx-${new_nginx}.tar.gz"
+    local ossl_ver="${new_openssl:-$openssl_for_nginx}"
+    [[ -n "$ossl_ver" ]] && rm -rf "openssl-${ossl_ver}" "openssl-${ossl_ver}.tar.gz"
+    [[ -n "$new_jemalloc" ]] && rm -rf "jemalloc-${new_jemalloc}" "jemalloc-${new_jemalloc}.tar.bz2"
+    echo -e "${OK} ${GreenBG} 临时文件清理完成 ${Font}"
+}
+
+nginx_upgrade() {
+    nginx_upgrade_is_root
+    nginx_upgrade_ensure_deps
+    nginx_upgrade_check_mode
+    nginx_upgrade_show_version
+    nginx_upgrade_check_modules
+    nginx_upgrade_check_conflicts
+    nginx_upgrade_input
+    nginx_upgrade_backup
+    nginx_upgrade_download
+    nginx_upgrade_extract
+    nginx_upgrade_compile_jemalloc
+    nginx_upgrade_compile_nginx
+    nginx_upgrade_swap
+    nginx_upgrade_verify
+}
+
 modify_camouflage_path() {
     [[ -z ${camouflage_path} ]] && camouflage_path=1
     sed -i "/location/c \\\tlocation \/${camouflage_path}\/" ${nginx_conf}          #Modify the camouflage path of the nginx configuration file
@@ -2580,6 +2979,7 @@ install_menu() {
         echo -e "${Green}2.${Font} 升级 V2Ray"
         echo -e "${Green}3.${Font} 安装 AnyTLS (sing-box)"
         echo -e "${Green}4.${Font} 升级 sing-box"
+        echo -e "${Green}5.${Font} 升级 Nginx"
         echo -e "${Green}0.${Font} 返回上级菜单 \n"
         read -rp "请输入数字：" sub_num
         case ${sub_num} in
@@ -2595,6 +2995,9 @@ install_menu() {
             ;;
         4)
             singbox_update
+            ;;
+        5)
+            nginx_upgrade
             ;;
         0)
             break

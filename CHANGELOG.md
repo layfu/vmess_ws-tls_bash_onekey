@@ -1,3 +1,10 @@
+## 2026-08-19
+* 新增 Nginx 升级功能（`./install.sh nginx_update` 或「安装与升级」菜单第 5 项）
+* 升级仅替换二进制，`nginx.conf` / `conf.d` / `mime.types` 等自定义配置全部保留并自动备份，失败自动回滚
+* 编译参数与原安装保持一致（PCRE2，无 `--with-pcre`）
+* 升级前检测 `load_module` 动态模块依赖与 apt/yum Nginx 包冲突
+* OpenSSL 源码下载增加旧版本目录 404 回退
+
 ## 2020-06-11
 * 从 v2ray 切换至 v2fly
 * mtproxy 安装下线

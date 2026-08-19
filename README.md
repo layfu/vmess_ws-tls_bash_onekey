@@ -30,7 +30,10 @@ wget -N --no-check-certificate -q -O install.sh "https://raw.githubusercontent.c
 ./install.sh          # 进入管理菜单
 ./install.sh dat_update   # 更新 geoip.dat / geosite.dat
 ./install.sh singbox_update   # 升级 sing-box
+./install.sh nginx_update   # 升级 Nginx（仅替换二进制，保留全部自定义配置）
 ```
+
+> 升级 Nginx 时仅替换 `/etc/nginx/sbin/nginx` 一个文件，`nginx.conf`、`conf.d/*.conf`、`mime.types` 等所有配置均原样保留并自动备份；编译参数与原安装完全一致（PCRE2，无 `--with-pcre`）。
 
 ### AnyTLS 安装
 
