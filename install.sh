@@ -31,7 +31,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.5.0"
+shell_version="1.6.5.1"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -1763,7 +1763,7 @@ routing_rules_gen() {
     [[ -n "${ips_json}" ]] && _rules_append "{\"type\":\"field\",\"ip\":[${ips_json}],\"outboundTag\":\"blocked\"}"
 
     if [[ "${warp_mode}" == "all" ]]; then
-        _rules_append '{"type":"field","outboundTag":"warp"}'
+        _rules_append '{"type":"field","network":"tcp,udp","outboundTag":"warp"}'
     elif [[ "${warp_mode}" == "user" ]]; then
         local warp_users_json="" u first_u=1
         if [[ -f "${warp_users_file}" ]]; then

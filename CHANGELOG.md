@@ -1,4 +1,7 @@
 ## 2026-08-26
+* 修复 WARP `all` 模式兜底路由规则无有效字段导致 v2fly v5.53 报错 `this rule has no effective fields`（改为 `network: tcp,udp` catch-all）
+
+## 2026-08-26
 * 新增落地套 WARP 功能：`cloudflare-warp` 官方包（proxy/SOCKS5 模式，默认 `127.0.0.1:40000`），出站流量可走 Cloudflare WARP 干净出口
 * V2Ray 与 AnyTLS 各自独立开关，支持三种模式：`off`（直连）/ `all`（全量走 WARP）/ `user`（仅指定用户走 WARP）
 * 「安装与升级」菜单新增「安装/卸载 WARP」；「路由规则」菜单新增「WARP 出站模式」与「管理 WARP 用户」
