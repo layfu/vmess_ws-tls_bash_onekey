@@ -31,7 +31,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.5.1"
+shell_version="1.6.5.2"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -849,7 +849,7 @@ anytls_routing_rules_gen() {
                 warp_users_json="${warp_users_json}\"${u}\""
             done <"${anytls_warp_users_file}"
         fi
-        [[ -n "${warp_users_json}" ]] && _anytls_rules_append "{\"user\":[${warp_users_json}],\"outbound\":\"warp\"}"
+        [[ -n "${warp_users_json}" ]] && _anytls_rules_append "{\"auth_user\":[${warp_users_json}],\"outbound\":\"warp\"}"
     fi
 
     echo "${ANYTLS_ROUTING_RULES}"

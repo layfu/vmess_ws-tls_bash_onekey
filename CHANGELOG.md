@@ -1,4 +1,7 @@
 ## 2026-08-26
+* 修复 AnyTLS WARP `user` 模式不生效：sing-box 路由匹配入站用户名应用 `auth_user` 字段（`user` 匹配的是 Linux 系统用户，永远不命中）
+
+## 2026-08-26
 * 修复 WARP `all` 模式兜底路由规则无有效字段导致 v2fly v5.53 报错 `this rule has no effective fields`（改为 `network: tcp,udp` catch-all）
 
 ## 2026-08-26
