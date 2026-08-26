@@ -52,6 +52,18 @@ Surge 配置示例（iOS 5.17.0+ / Mac 6.4.3+）：
 AnyTLS = anytls, your.domain.com, 8443, password=xxxxxxxxxxxxxxxx, sni=your.domain.com, reuse=true
 ```
 
+### 落地套 WARP
+
+将节点的出站流量走 Cloudflare WARP，获得干净的 Cloudflare 出口 IP（仅支持 Debian/Ubuntu）。
+
+1. 进入管理菜单 → `1 安装与升级` → `6 安装/卸载 WARP` → 安装并验证 `warp=on`
+2. 配置出站模式（V2Ray 与 AnyTLS 各自独立）：
+   - `V2Ray 配置` → `5 路由规则` → `6 WARP 出站模式`，在 `off`(直连) / `all`(全量走 WARP) / `user`(仅指定用户) 间切换
+   - `AnyTLS 配置` → `3 路由规则` → `6 WARP 出站模式`，同上
+3. `user` 模式下，用 `7 管理 WARP 用户` 添加需要走 WARP 的用户名（需与 VMess/AnyTLS 用户名一致）
+
+> WARP 隧道为系统级，两协议共用；出站开关与用户列表各自独立。WARP 控制面显示 `Connected` 不代表转发正常，脚本通过 SOCKS 探活 `warp=on` 校验。可安装自愈守护（systemd timer 每 60s 检测，异常自动重启 `warp-svc`）。
+
 ### 常用命令
 
 ```bash
@@ -71,10 +83,12 @@ systemctl restart sing-box # 重启 sing-box (AnyTLS)
 | `/etc/v2ray/users` | VMess 用户列表 |
 | `/etc/v2ray/routing.conf` | 路由规则开关 |
 | `/etc/v2ray/block_domains` `/etc/v2ray/block_ips` | 自定义屏蔽域名/IP |
+| `/etc/v2ray/warp_users` | VMess WARP 用户列表（user 模式） |
 | `/etc/sing-box/config.json` | sing-box 服务端配置（AnyTLS） |
 | `/etc/sing-box/users` | AnyTLS 用户列表 |
 | `/etc/sing-box/routing.conf` | AnyTLS 路由规则开关 |
 | `/etc/sing-box/block_domains` `/etc/sing-box/block_ips` | AnyTLS 自定义屏蔽域名/IP |
+| `/etc/sing-box/warp_users` | AnyTLS WARP 用户列表（user 模式） |
 | `/etc/sing-box/*.srs` | AnyTLS 路由规则集数据文件 |
 | `/etc/nginx/` | Nginx 目录 |
 | `/home/wwwroot/3DCEList` | Web 伪装站点 |

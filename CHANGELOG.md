@@ -1,3 +1,11 @@
+## 2026-08-26
+* 新增落地套 WARP 功能：`cloudflare-warp` 官方包（proxy/SOCKS5 模式，默认 `127.0.0.1:40000`），出站流量可走 Cloudflare WARP 干净出口
+* V2Ray 与 AnyTLS 各自独立开关，支持三种模式：`off`（直连）/ `all`（全量走 WARP）/ `user`（仅指定用户走 WARP）
+* 「安装与升级」菜单新增「安装/卸载 WARP」；「路由规则」菜单新增「WARP 出站模式」与「管理 WARP 用户」
+* 新增 WARP 自愈守护（systemd timer 每 60s 穿 SOCKS 探活 `warp=on`，异常重启 `warp-svc`）
+* 卸载流程支持一并移除 WARP 及自愈守护
+* 注意：WARP 官方源仅支持 Debian/Ubuntu
+
 ## 2026-08-19
 * 新增 Nginx 升级功能（`./install.sh nginx_update` 或「安装与升级」菜单第 5 项）
 * 升级仅替换二进制，`nginx.conf` / `conf.d` / `mime.types` 等自定义配置全部保留并自动备份，失败自动回滚

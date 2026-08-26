@@ -31,7 +31,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.4.0"
+shell_version="1.6.5.0"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -51,6 +51,12 @@ vmess_users_file="/etc/v2ray/users"
 routing_conf_file="/etc/v2ray/routing.conf"
 block_domains_file="/etc/v2ray/block_domains"
 block_ips_file="/etc/v2ray/block_ips"
+warp_socks_port="40000"
+warp_users_file="/etc/v2ray/warp_users"
+anytls_warp_users_file="/etc/sing-box/warp_users"
+warp_healthcheck_file="/usr/local/bin/warp-healthcheck.sh"
+warp_systemd_service="/etc/systemd/system/warp-healthcheck.service"
+warp_systemd_timer="/etc/systemd/system/warp-healthcheck.timer"
 nginx_systemd_file="/etc/systemd/system/nginx.service"
 v2ray_systemd_file="/etc/systemd/system/v2ray.service"
 v2ray_access_log="/var/log/v2ray/access.log"
@@ -763,14 +769,17 @@ anytls_routing_load() {
     anytls_block_cn=0
     anytls_block_ads=0
     anytls_block_bt=1
+    anytls_warp_mode="off"
     if [[ -f "${anytls_routing_conf_file}" ]]; then
         anytls_block_cn="$(grep '^block_cn=' "${anytls_routing_conf_file}" | head -1 | cut -d= -f2)"
         anytls_block_ads="$(grep '^block_ads=' "${anytls_routing_conf_file}" | head -1 | cut -d= -f2)"
         anytls_block_bt="$(grep '^block_bt=' "${anytls_routing_conf_file}" | head -1 | cut -d= -f2)"
+        anytls_warp_mode="$(grep '^warp_mode=' "${anytls_routing_conf_file}" | head -1 | cut -d= -f2)"
     fi
     [[ -z "${anytls_block_cn}" ]] && anytls_block_cn=0
     [[ -z "${anytls_block_ads}" ]] && anytls_block_ads=0
     [[ -z "${anytls_block_bt}" ]] && anytls_block_bt=1
+    [[ "${anytls_warp_mode}" != "all" && "${anytls_warp_mode}" != "user" ]] && anytls_warp_mode="off"
 }
 
 anytls_routing_save() {
@@ -779,6 +788,7 @@ anytls_routing_save() {
 block_cn=${anytls_block_cn}
 block_ads=${anytls_block_ads}
 block_bt=${anytls_block_bt}
+warp_mode=${anytls_warp_mode}
 EOF
 }
 
@@ -829,6 +839,18 @@ anytls_routing_rules_gen() {
         done <"${anytls_block_ips_file}"
     fi
     [[ -n "${ips_json}" ]] && _anytls_rules_append "{\"ip_cidr\":[${ips_json}],\"outbound\":\"block\"}"
+
+    if [[ "${anytls_warp_mode}" == "user" ]]; then
+        local warp_users_json="" u first_u=1
+        if [[ -f "${anytls_warp_users_file}" ]]; then
+            while read -r u; do
+                [[ -z "${u}" ]] && continue
+                if [[ ${first_u} -eq 1 ]]; then first_u=0; else warp_users_json="${warp_users_json},"; fi
+                warp_users_json="${warp_users_json}\"${u}\""
+            done <"${anytls_warp_users_file}"
+        fi
+        [[ -n "${warp_users_json}" ]] && _anytls_rules_append "{\"user\":[${warp_users_json}],\"outbound\":\"warp\"}"
+    fi
 
     echo "${ANYTLS_ROUTING_RULES}"
 }
@@ -1038,6 +1060,76 @@ anytls_block_ip_menu() {
     done
 }
 
+anytls_warp_user_list() {
+    echo -e "${OK} ${GreenBG} 当前 AnyTLS WARP 用户列表（仅 user 模式生效）${Font}"
+    if [[ ! -f "${anytls_warp_users_file}" ]] || [[ ! -s "${anytls_warp_users_file}" ]]; then
+        echo -e "${Red} 无 ${Font}"
+        return 0
+    fi
+    local idx=0
+    while read -r u; do
+        [[ -z "${u}" ]] && continue
+        idx=$((idx + 1))
+        echo -e "${Green}${idx}.${Font} ${u}"
+    done <"${anytls_warp_users_file}"
+}
+
+anytls_warp_user_add() {
+    read -rp "请输入要走 WARP 的用户名（需与 AnyTLS 用户名一致）:" warp_user
+    [[ -z "${warp_user}" ]] && return 1
+    if [[ "${warp_user}" =~ [[:space:]] ]]; then
+        echo -e "${Error} ${RedBG} 用户名不能包含空格 ${Font}"
+        return 1
+    fi
+    mkdir -p "${singbox_conf_dir}"
+    echo "${warp_user}" >>"${anytls_warp_users_file}"
+    anytls_conf_add
+    systemctl restart sing-box
+    judge "AnyTLS WARP 用户添加"
+}
+
+anytls_warp_user_del() {
+    if [[ ! -s "${anytls_warp_users_file}" ]]; then
+        echo -e "${Error} ${RedBG} AnyTLS WARP 用户列表为空 ${Font}"
+        return 1
+    fi
+    anytls_warp_user_list
+    read -rp "请输入要删除的用户名:" del_user
+    [[ -z "${del_user}" ]] && return 1
+    sed -i "/^${del_user}$/d" "${anytls_warp_users_file}"
+    anytls_conf_add
+    systemctl restart sing-box
+    judge "AnyTLS WARP 用户删除"
+}
+
+anytls_warp_user_menu() {
+    while true; do
+        echo -e "\t 管理 AnyTLS WARP 用户"
+        echo -e "${Green}1.${Font} 查看 WARP 用户列表"
+        echo -e "${Green}2.${Font} 添加 WARP 用户"
+        echo -e "${Green}3.${Font} 删除 WARP 用户"
+        echo -e "${Green}0.${Font} 返回上级菜单 \n"
+        read -rp "请输入数字：" wu_num
+        case ${wu_num} in
+        1)
+            anytls_warp_user_list
+            ;;
+        2)
+            anytls_warp_user_add
+            ;;
+        3)
+            anytls_warp_user_del
+            ;;
+        0)
+            break
+            ;;
+        *)
+            echo -e "${RedBG}请输入正确的数字${Font}"
+            ;;
+        esac
+    done
+}
+
 anytls_routing_menu() {
     if [[ ! -f "${singbox_conf}" ]]; then
         echo -e "${Error} ${RedBG} AnyTLS 未安装，请先安装 ${Font}"
@@ -1045,16 +1137,20 @@ anytls_routing_menu() {
     fi
     while true; do
         anytls_routing_load
-        local cn_s="关" ads_s="关" bt_s="关"
+        local cn_s="关" ads_s="关" bt_s="关" warp_s="off(直连)"
         [[ "${anytls_block_cn}" == "1" ]] && cn_s="开"
         [[ "${anytls_block_ads}" == "1" ]] && ads_s="开"
         [[ "${anytls_block_bt}" == "1" ]] && bt_s="开"
+        [[ "${anytls_warp_mode}" == "all" ]] && warp_s="all(全量WARP)"
+        [[ "${anytls_warp_mode}" == "user" ]] && warp_s="user(指定用户)"
         echo -e "\t 路由规则（屏蔽）"
         echo -e "${Green}1.${Font} 禁止国内地址  [${cn_s}]"
         echo -e "${Green}2.${Font} 禁止广告地址  [${ads_s}]"
         echo -e "${Green}3.${Font} 禁止 BT 协议  [${bt_s}]"
         echo -e "${Green}4.${Font} 禁止自定义域名"
         echo -e "${Green}5.${Font} 禁止自定义 IP"
+        echo -e "${Green}6.${Font} WARP 出站模式  [${warp_s}]"
+        echo -e "${Green}7.${Font} 管理 WARP 用户"
         echo -e "${Green}0.${Font} 返回上级菜单 \n"
         read -rp "请输入数字：" routing_num
         case ${routing_num} in
@@ -1085,6 +1181,23 @@ anytls_routing_menu() {
         5)
             anytls_block_ip_menu
             ;;
+        6)
+            case "${anytls_warp_mode}" in
+            off) anytls_warp_mode="all" ;;
+            all) anytls_warp_mode="user" ;;
+            *) anytls_warp_mode="off" ;;
+            esac
+            if [[ "${anytls_warp_mode}" != "off" ]] && ! warp_installed; then
+                echo -e "${Error} ${RedBG} WARP 未安装，请先在「安装与升级 → WARP」中安装，否则出站将失败 ${Font}"
+            fi
+            anytls_routing_save
+            anytls_conf_add
+            systemctl restart sing-box
+            judge "AnyTLS WARP 出站模式 切换"
+            ;;
+        7)
+            anytls_warp_user_menu
+            ;;
         0)
             break
             ;;
@@ -1113,9 +1226,10 @@ anytls_conf_add() {
 
     anytls_routing_load
     anytls_routing_ensure_geodata
-    local routing_rules_json rule_set_json
+    local routing_rules_json rule_set_json route_final="direct"
     routing_rules_json="$(anytls_routing_rules_gen)"
     rule_set_json="$(anytls_routing_rule_set_gen)"
+    [[ "${anytls_warp_mode}" == "all" ]] && route_final="warp"
 
     cat >${singbox_conf} <<EOF
 {
@@ -1147,6 +1261,13 @@ anytls_conf_add() {
     {
       "type": "block",
       "tag": "block"
+    },
+    {
+      "type": "socks",
+      "tag": "warp",
+      "server": "127.0.0.1",
+      "server_port": ${warp_socks_port},
+      "version": "5"
     }
   ],
   "route": {
@@ -1156,7 +1277,7 @@ anytls_conf_add() {
     "rules": [
       ${routing_rules_json}
     ],
-    "final": "direct"
+    "final": "${route_final}"
   }
 }
 EOF
@@ -1571,14 +1692,17 @@ routing_load() {
     block_cn=0
     block_ads=0
     block_bt=1
+    warp_mode="off"
     if [[ -f "${routing_conf_file}" ]]; then
         block_cn="$(grep '^block_cn=' "${routing_conf_file}" | head -1 | cut -d= -f2)"
         block_ads="$(grep '^block_ads=' "${routing_conf_file}" | head -1 | cut -d= -f2)"
         block_bt="$(grep '^block_bt=' "${routing_conf_file}" | head -1 | cut -d= -f2)"
+        warp_mode="$(grep '^warp_mode=' "${routing_conf_file}" | head -1 | cut -d= -f2)"
     fi
     [[ -z "${block_cn}" ]] && block_cn=0
     [[ -z "${block_ads}" ]] && block_ads=0
     [[ -z "${block_bt}" ]] && block_bt=1
+    [[ "${warp_mode}" != "all" && "${warp_mode}" != "user" ]] && warp_mode="off"
 }
 
 routing_save() {
@@ -1587,6 +1711,7 @@ routing_save() {
 block_cn=${block_cn}
 block_ads=${block_ads}
 block_bt=${block_bt}
+warp_mode=${warp_mode}
 EOF
 }
 
@@ -1636,6 +1761,20 @@ routing_rules_gen() {
         done <"${block_ips_file}"
     fi
     [[ -n "${ips_json}" ]] && _rules_append "{\"type\":\"field\",\"ip\":[${ips_json}],\"outboundTag\":\"blocked\"}"
+
+    if [[ "${warp_mode}" == "all" ]]; then
+        _rules_append '{"type":"field","outboundTag":"warp"}'
+    elif [[ "${warp_mode}" == "user" ]]; then
+        local warp_users_json="" u first_u=1
+        if [[ -f "${warp_users_file}" ]]; then
+            while read -r u; do
+                [[ -z "${u}" ]] && continue
+                if [[ ${first_u} -eq 1 ]]; then first_u=0; else warp_users_json="${warp_users_json},"; fi
+                warp_users_json="${warp_users_json}\"${u}\""
+            done <"${warp_users_file}"
+        fi
+        [[ -n "${warp_users_json}" ]] && _rules_append "{\"type\":\"field\",\"user\":[${warp_users_json}],\"outboundTag\":\"warp\"}"
+    fi
 
     echo "${ROUTING_RULES}"
 }
@@ -1794,6 +1933,76 @@ block_ip_menu() {
     done
 }
 
+warp_user_list() {
+    echo -e "${OK} ${GreenBG} 当前 WARP 用户列表（仅 user 模式生效）${Font}"
+    if [[ ! -f "${warp_users_file}" ]] || [[ ! -s "${warp_users_file}" ]]; then
+        echo -e "${Red} 无 ${Font}"
+        return 0
+    fi
+    local idx=0
+    while read -r u; do
+        [[ -z "${u}" ]] && continue
+        idx=$((idx + 1))
+        echo -e "${Green}${idx}.${Font} ${u}"
+    done <"${warp_users_file}"
+}
+
+warp_user_add() {
+    read -rp "请输入要走 WARP 的用户名（需与 VMess 用户名一致）:" warp_user
+    [[ -z "${warp_user}" ]] && return 1
+    if [[ "${warp_user}" =~ [[:space:]] ]]; then
+        echo -e "${Error} ${RedBG} 用户名不能包含空格 ${Font}"
+        return 1
+    fi
+    mkdir -p /etc/v2ray
+    echo "${warp_user}" >>"${warp_users_file}"
+    v2ray_conf_add
+    systemctl restart v2ray
+    judge "WARP 用户添加"
+}
+
+warp_user_del() {
+    if [[ ! -s "${warp_users_file}" ]]; then
+        echo -e "${Error} ${RedBG} WARP 用户列表为空 ${Font}"
+        return 1
+    fi
+    warp_user_list
+    read -rp "请输入要删除的用户名:" del_user
+    [[ -z "${del_user}" ]] && return 1
+    sed -i "/^${del_user}$/d" "${warp_users_file}"
+    v2ray_conf_add
+    systemctl restart v2ray
+    judge "WARP 用户删除"
+}
+
+warp_user_menu() {
+    while true; do
+        echo -e "\t 管理 WARP 用户"
+        echo -e "${Green}1.${Font} 查看 WARP 用户列表"
+        echo -e "${Green}2.${Font} 添加 WARP 用户"
+        echo -e "${Green}3.${Font} 删除 WARP 用户"
+        echo -e "${Green}0.${Font} 返回上级菜单 \n"
+        read -rp "请输入数字：" wu_num
+        case ${wu_num} in
+        1)
+            warp_user_list
+            ;;
+        2)
+            warp_user_add
+            ;;
+        3)
+            warp_user_del
+            ;;
+        0)
+            break
+            ;;
+        *)
+            echo -e "${RedBG}请输入正确的数字${Font}"
+            ;;
+        esac
+    done
+}
+
 routing_menu() {
     if [[ ! -f ${v2ray_qr_config_file} ]]; then
         echo -e "${Error} ${RedBG} V2Ray 未安装，请先安装 ${Font}"
@@ -1801,16 +2010,20 @@ routing_menu() {
     fi
     while true; do
         routing_load
-        local cn_s="关" ads_s="关" bt_s="关"
+        local cn_s="关" ads_s="关" bt_s="关" warp_s="off(直连)"
         [[ "${block_cn}" == "1" ]] && cn_s="开"
         [[ "${block_ads}" == "1" ]] && ads_s="开"
         [[ "${block_bt}" == "1" ]] && bt_s="开"
+        [[ "${warp_mode}" == "all" ]] && warp_s="all(全量WARP)"
+        [[ "${warp_mode}" == "user" ]] && warp_s="user(指定用户)"
         echo -e "\t 路由规则（屏蔽）"
         echo -e "${Green}1.${Font} 禁止国内地址  [${cn_s}]"
         echo -e "${Green}2.${Font} 禁止广告地址  [${ads_s}]"
         echo -e "${Green}3.${Font} 禁止 BT 协议  [${bt_s}]"
         echo -e "${Green}4.${Font} 禁止自定义域名"
         echo -e "${Green}5.${Font} 禁止自定义 IP"
+        echo -e "${Green}6.${Font} WARP 出站模式  [${warp_s}]"
+        echo -e "${Green}7.${Font} 管理 WARP 用户"
         echo -e "${Green}0.${Font} 返回上级菜单 \n"
         read -rp "请输入数字：" routing_num
         case ${routing_num} in
@@ -1840,6 +2053,23 @@ routing_menu() {
             ;;
         5)
             block_ip_menu
+            ;;
+        6)
+            case "${warp_mode}" in
+            off) warp_mode="all" ;;
+            all) warp_mode="user" ;;
+            *) warp_mode="off" ;;
+            esac
+            if [[ "${warp_mode}" != "off" ]] && ! warp_installed; then
+                echo -e "${Error} ${RedBG} WARP 未安装，请先在「安装与升级 → WARP」中安装，否则出站将失败 ${Font}"
+            fi
+            routing_save
+            v2ray_conf_add
+            systemctl restart v2ray
+            judge "WARP 出站模式 切换"
+            ;;
+        7)
+            warp_user_menu
             ;;
         0)
             break
@@ -1907,7 +2137,8 @@ ${sniffing_json}
   ],
   "outbounds": [
     { "protocol": "freedom", "settings": {}, "tag": "direct" },
-    { "protocol": "blackhole", "settings": {}, "tag": "blocked" }
+    { "protocol": "blackhole", "settings": {}, "tag": "blocked" },
+    { "protocol": "socks", "settings": { "servers": [{ "address": "127.0.0.1", "port": ${warp_socks_port} }] }, "tag": "warp" }
   ],
   "dns": {
     "servers": [
@@ -2346,6 +2577,19 @@ uninstall_all() {
 
         esac
     fi
+    if warp_installed; then
+        echo -e "${OK} ${Green} 是否卸载 WARP [Y/N]? ${Font}"
+        read -r uninstall_warp
+        case $uninstall_warp in
+        [yY][eE][sS] | [yY])
+            warp_uninstall
+            uninstalled_any=1
+            echo -e "${OK} ${Green} 已卸载 WARP ${Font}"
+            ;;
+        *) ;;
+
+        esac
+    fi
     echo -e "${OK} ${Green} 是否卸载acme.sh及证书 [Y/N]? ${Font}"
     read -r uninstall_acme
     case $uninstall_acme in
@@ -2464,6 +2708,146 @@ maintain() {
     echo -e "${RedBG}该选项暂时无法使用${Font}"
     echo -e "${RedBG}$1${Font}"
     exit 0
+}
+warp_installed() {
+    [[ -x /usr/bin/warp-cli ]] && return 0
+    return 1
+}
+warp_install() {
+    is_root
+    if [[ "${ID}" != "debian" && "${ID}" != "ubuntu" ]]; then
+        echo -e "${Error} ${RedBG} WARP 官方源仅支持 Debian/Ubuntu，当前系统 ${ID} 不支持 ${Font}"
+        return 1
+    fi
+    if warp_installed; then
+        echo -e "${OK} ${GreenBG} WARP 已安装 ${Font}"
+        warp_status
+        return 0
+    fi
+    command -v curl >/dev/null 2>&1 || apt-get install -y -qq curl >/dev/null
+    apt-get install -y -qq gnupg >/dev/null
+    curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
+    echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ bookworm main" >/etc/apt/sources.list.d/cloudflare-client.list
+    apt-get update -qq
+    apt-get install -y -qq cloudflare-warp >/dev/null
+    judge "cloudflare-warp 安装"
+    warp-cli --accept-tos registration new >/dev/null 2>&1 || true
+    warp-cli --accept-tos mode proxy >/dev/null 2>&1
+    warp-cli --accept-tos proxy port ${warp_socks_port} >/dev/null 2>&1
+    warp-cli --accept-tos connect >/dev/null 2>&1
+    sleep 5
+    echo -e "${OK} ${GreenBG} WARP 安装完成，正在验证（期望 warp=on）${Font}"
+    warp_status
+}
+warp_uninstall() {
+    if warp_installed; then
+        warp-cli --accept-tos disconnect >/dev/null 2>&1
+        warp-cli --accept-tos delete >/dev/null 2>&1
+    fi
+    systemctl stop warp-svc >/dev/null 2>&1
+    systemctl disable warp-svc >/dev/null 2>&1
+    apt-get remove -y -qq cloudflare-warp >/dev/null 2>&1
+    rm -f /etc/apt/sources.list.d/cloudflare-client.list
+    rm -f /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
+    warp_watchdog_uninstall
+    echo -e "${OK} ${GreenBG} WARP 已卸载 ${Font}"
+}
+warp_status() {
+    if ! warp_installed; then
+        echo -e "${Error} ${RedBG} WARP 未安装 ${Font}"
+        return 1
+    fi
+    echo -e "${OK} ${GreenBG} WARP 服务状态 ${Font}"
+    warp-cli status 2>/dev/null || true
+    echo -e "${OK} ${GreenBG} 出口探测（经 SOCKS5 127.0.0.1:${warp_socks_port}）${Font}"
+    if curl -s -x socks5h://127.0.0.1:${warp_socks_port} --max-time 10 https://1.1.1.1/cdn-cgi/trace 2>/dev/null | grep -E 'ip=|warp='; then
+        :
+    else
+        echo -e "${Red} 探测失败，WARP 可能未正常转发（控制面 Connected 不代表转发正常）${Font}"
+    fi
+}
+warp_watchdog_install() {
+    if ! warp_installed; then
+        echo -e "${Error} ${RedBG} 请先安装 WARP ${Font}"
+        return 1
+    fi
+    cat >"${warp_healthcheck_file}" <<'EOF'
+#!/usr/bin/env bash
+# WARP self-heal: verify egress through the SOCKS proxy; restart warp-svc if broken.
+PORT="${WARP_SOCKS_PORT:-40000}"
+if curl -s -x socks5h://127.0.0.1:${PORT} --max-time 10 https://1.1.1.1/cdn-cgi/trace 2>/dev/null | grep -q 'warp=on'; then
+    exit 0
+fi
+systemctl restart warp-svc
+EOF
+    chmod +x "${warp_healthcheck_file}"
+    cat >"${warp_systemd_service}" <<EOF
+[Unit]
+Description=WARP proxy health check
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=WARP_SOCKS_PORT=${warp_socks_port}
+ExecStart=${warp_healthcheck_file}
+EOF
+    cat >"${warp_systemd_timer}" <<'EOF'
+[Unit]
+Description=Run WARP proxy health check every 60s
+
+[Timer]
+OnBootSec=60
+OnUnitActiveSec=60
+AccuracySec=5
+
+[Install]
+WantedBy=timers.target
+EOF
+    systemctl daemon-reload
+    systemctl enable --now warp-healthcheck.timer >/dev/null 2>&1
+    echo -e "${OK} ${GreenBG} WARP 自愈守护已安装（每 60s 检测）${Font}"
+}
+warp_watchdog_uninstall() {
+    systemctl disable --now warp-healthcheck.timer >/dev/null 2>&1
+    rm -f "${warp_systemd_timer}" "${warp_systemd_service}" "${warp_healthcheck_file}"
+    systemctl daemon-reload
+}
+warp_menu() {
+    while true; do
+        section_title "WARP"
+        echo -e "${Green}1.${Font} 安装 WARP"
+        echo -e "${Green}2.${Font} 卸载 WARP"
+        echo -e "${Green}3.${Font} 查看 WARP 状态"
+        echo -e "${Green}4.${Font} 自愈守护 安装/卸载"
+        echo -e "${Green}0.${Font} 返回上级菜单 \n"
+        read -rp "请输入数字：" warp_num
+        case ${warp_num} in
+        1)
+            warp_install
+            ;;
+        2)
+            warp_uninstall
+            ;;
+        3)
+            warp_status
+            ;;
+        4)
+            if [[ -f "${warp_systemd_timer}" ]]; then
+                warp_watchdog_uninstall
+                judge "WARP 自愈守护 卸载"
+            else
+                warp_watchdog_install
+                judge "WARP 自愈守护 安装"
+            fi
+            ;;
+        0)
+            break
+            ;;
+        *)
+            echo -e "${RedBG}请输入正确的数字${Font}"
+            ;;
+        esac
+    done
 }
 list() {
     case $1 in
@@ -2980,6 +3364,7 @@ install_menu() {
         echo -e "${Green}3.${Font} 安装 AnyTLS (sing-box)"
         echo -e "${Green}4.${Font} 升级 sing-box"
         echo -e "${Green}5.${Font} 升级 Nginx"
+        echo -e "${Green}6.${Font} 安装/卸载 WARP"
         echo -e "${Green}0.${Font} 返回上级菜单 \n"
         read -rp "请输入数字：" sub_num
         case ${sub_num} in
@@ -2998,6 +3383,9 @@ install_menu() {
             ;;
         5)
             nginx_upgrade
+            ;;
+        6)
+            warp_menu
             ;;
         0)
             break
