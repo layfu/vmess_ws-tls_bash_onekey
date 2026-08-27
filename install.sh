@@ -31,7 +31,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.6.1"
+shell_version="1.6.7.0"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -659,6 +659,28 @@ singbox_v2rayapi_ensure() {
     case "${confirm}" in
     [yY][eE][sS] | [yY])
         singbox_v2rayapi_download || echo -e "${Error} ${RedBG} 下载失败，AnyTLS 每用户统计仍不可用（可稍后重试） ${Font}"
+        ;;
+    *) ;;
+    esac
+    return 0
+}
+
+singbox_v2rayapi_update() {
+    [[ -f "${singbox_conf}" ]] || { echo -e "${Error} ${RedBG} AnyTLS 未安装，无需更新 ${Font}"; return 0; }
+    if ! singbox_has_v2ray_api; then
+        echo -e "${Red} 当前 sing-box 非 v2ray_api 定制构建。可先在「安装 流量面板」时自动下载，或手动替换。 ${Font}"
+        return 0
+    fi
+    local confirm=""
+    read -rp "是否重新下载最新 sing-box (v2ray_api) 并替换（默认 Y，原二进制备份为 .bak）? [Y/n]: " confirm
+    [[ -z "${confirm}" ]] && confirm="Y"
+    case "${confirm}" in
+    [yY][eE][sS] | [yY])
+        if singbox_v2rayapi_download; then
+            anytls_conf_add
+            systemctl restart sing-box >/dev/null 2>&1
+            judge "sing-box (v2ray_api) 更新"
+        fi
         ;;
     *) ;;
     esac
@@ -3695,6 +3717,7 @@ install_menu() {
         echo -e "${Green}6.${Font} 安装/卸载 WARP"
         echo -e "${Green}7.${Font} 安装 流量面板"
         echo -e "${Green}8.${Font} 升级 流量面板"
+        echo -e "${Green}9.${Font} 更新 sing-box (v2ray_api)"
         echo -e "${Green}0.${Font} 返回上级菜单 \n"
         read -rp "请输入数字：" sub_num
         case ${sub_num} in
@@ -3722,6 +3745,9 @@ install_menu() {
             ;;
         8)
             panel_update
+            ;;
+        9)
+            singbox_v2rayapi_update
             ;;
         0)
             break

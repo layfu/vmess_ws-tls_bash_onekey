@@ -81,6 +81,7 @@ AnyTLS = anytls, your.domain.com, 8443, password=xxxxxxxxxxxxxxxx, sni=your.doma
 - 安装面板时会自动在 v2fly / sing-box 配置中注入统计接口（v2fly `api`+`stats`+`policy`；sing-box `experimental.v2ray_api`），并重启对应服务。
 - VMess 每用户流量开箱即用；**AnyTLS 每用户流量与来源 IP 需要定制 sing-box**（官方二进制默认不含 v2ray_api，且 AnyTLS 连接日志不含来源地址）。安装面板时脚本会自动检测：若当前 sing-box 不含 v2ray_api，会提示下载 `sing-box-v2rayapi-linux-<arch>`（由 `.github/workflows/singbox-release.yml` 构建，已内置来源地址日志补丁）并替换（原二进制备份为 `sing-box.bak`）。使用官方 sing-box 时 AnyTLS 仅能查看连接目标（无来源 IP、无每用户流量）。
 - 修改面板密码：`其他` 菜单 → `5 修改 面板密码`；卸载面板：`其他` → `1 卸载`。
+- 升级面板：`1 安装与升级` → `8 升级 流量面板`；更新定制 sing-box（含来源日志补丁）：`1 安装与升级` → `9 更新 sing-box (v2ray_api)`。
 
 ### 常用命令
 

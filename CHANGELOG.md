@@ -5,6 +5,7 @@
 * 定制 sing-box 补丁：AnyTLS 入站连接日志记录来源地址（`inbound connection from {source} to {dest}`），面板据此展示 AnyTLS 来源 IP
 * 新增「安装与升级」菜单第 7/8 项（安装/升级面板）、「其他」菜单第 5 项（修改面板密码）
 * 安装面板时自动检测 sing-box 是否含 v2ray_api，缺失则提示下载 `sing-box-v2rayapi-linux-<arch>` 替换（原二进制备份为 `.bak`）
+* 「安装与升级」菜单新增第 9 项「更新 sing-box (v2ray_api)」，一键重新下载替换定制 sing-box
 * 新增 `.github/workflows/panel-release.yml` 与 `singbox-release.yml`（构建面板与带 v2ray_api 的 sing-box）
 
 ## 2026-08-26
