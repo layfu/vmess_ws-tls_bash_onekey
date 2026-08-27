@@ -31,7 +31,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.8.0"
+shell_version="1.6.8.1"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -885,8 +885,10 @@ panel_update() {
     systemctl stop panel >/dev/null 2>&1
     if panel_download; then
         panel_config_gen
+        nginx_ws_access_log_add
         systemctl start panel >/dev/null 2>&1
         judge "面板升级"
+        systemctl restart nginx >/dev/null 2>&1
     else
         systemctl start panel >/dev/null 2>&1
         return 1
