@@ -128,44 +128,57 @@ function drawChart(buckets) {
   const el = document.getElementById('chart');
   el.innerHTML = '';
   const max = Math.max(1, ...buckets.map((b) => b.up + b.down));
-  const W = el.clientWidth - 16;
-  const H = 220 - 16;
-  const bw = W / buckets.length;
 
   const svgNS = 'http://www.w3.org/2000/svg';
-  const svg = document.createElementNS(svgNS, 'svg');
-  svg.setAttribute('width', W);
-  svg.setAttribute('height', H);
+  const width = el.clientWidth - 16;
+  const height = 260 - 16;
+  const margin = { top: 6, right: 6, bottom: 22, left: 56 };
+  const plotW = width - margin.left - margin.right;
+  const plotH = height - margin.top - margin.bottom;
+  const bw = plotW / buckets.length;
 
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('width', width);
+  svg.setAttribute('height', height);
+
+  // Y 轴：刻度线与数值（含单位）
+  const yTicks = 4;
+  for (let i = 0; i <= yTicks; i++) {
+    const val = (max / yTicks) * i;
+    const y = margin.top + plotH - (val / max) * plotH;
+    const line = document.createElementNS(svgNS, 'line');
+    line.setAttribute('x1', margin.left);
+    line.setAttribute('y1', y);
+    line.setAttribute('x2', margin.left + plotW);
+    line.setAttribute('y2', y);
+    line.setAttribute('stroke', '#262d36');
+    line.setAttribute('stroke-width', '1');
+    svg.appendChild(line);
+    svg.appendChild(axisText(svgNS, fmtBytes(val), margin.left - 6, y + 3, 'end'));
+  }
+
+  // 柱状图
   for (let i = 0; i < buckets.length; i++) {
     const b = buckets[i];
     const total = b.up + b.down;
-    const h = (total / max) * H;
-    const x = i * bw;
-    const y = H - h;
+    const h = (total / max) * plotH;
+    const x = margin.left + i * bw;
+    const y = margin.top + plotH - h;
     if (b.up > 0) {
-      const uh = (b.up / max) * H;
-      const rect = document.createElementNS(svgNS, 'rect');
-      rect.setAttribute('x', x + 1);
-      rect.setAttribute('y', y);
-      rect.setAttribute('width', Math.max(bw - 2, 1));
-      rect.setAttribute('height', uh);
-      rect.setAttribute('fill', '#38d39f');
-      svg.appendChild(rect);
+      svg.appendChild(rect(svgNS, x + 1, y, Math.max(bw - 2, 1), (b.up / max) * plotH, '#38d39f'));
     }
     if (b.down > 0) {
-      const dh = (b.down / max) * H;
-      const rect = document.createElementNS(svgNS, 'rect');
-      rect.setAttribute('x', x + 1);
-      rect.setAttribute('y', y + (b.up / max) * H);
-      rect.setAttribute('width', Math.max(bw - 2, 1));
-      rect.setAttribute('height', dh);
-      rect.setAttribute('fill', '#5aa2ff');
-      svg.appendChild(rect);
+      svg.appendChild(rect(svgNS, x + 1, y + (b.up / max) * plotH, Math.max(bw - 2, 1), (b.down / max) * plotH, '#5aa2ff'));
     }
     const title = document.createElementNS(svgNS, 'title');
     title.textContent = `${fmtHourLabel(b.hour)}  上行 ${fmtBytes(b.up)}  下行 ${fmtBytes(b.down)}`;
     svg.appendChild(title);
+  }
+
+  // X 轴：时间刻度
+  const labelEvery = Math.max(1, Math.ceil(buckets.length / 6));
+  for (let i = 0; i < buckets.length; i += labelEvery) {
+    svg.appendChild(axisText(svgNS, fmtHourLabel(buckets[i].hour), margin.left + i * bw + bw / 2, margin.top + plotH + 16, 'middle'));
   }
 
   const legend = document.createElement('div');
@@ -175,6 +188,26 @@ function drawChart(buckets) {
   legend.innerHTML = '<span style="color:#38d39f">■</span> 上行 &nbsp; <span style="color:#5aa2ff">■</span> 下行';
   el.appendChild(svg);
   el.appendChild(legend);
+}
+
+function axisText(svgNS, content, x, y, anchor) {
+  const t = document.createElementNS(svgNS, 'text');
+  t.setAttribute('x', x);
+  t.setAttribute('y', y);
+  t.setAttribute('text-anchor', anchor);
+  t.setAttribute('class', 'axis');
+  t.textContent = content;
+  return t;
+}
+
+function rect(svgNS, x, y, w, h, fill) {
+  const r = document.createElementNS(svgNS, 'rect');
+  r.setAttribute('x', x);
+  r.setAttribute('y', y);
+  r.setAttribute('width', Math.max(w, 0.5));
+  r.setAttribute('height', Math.max(h, 0));
+  r.setAttribute('fill', fill);
+  return r;
 }
 
 function escapeHtml(s) {
