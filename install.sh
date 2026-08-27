@@ -617,6 +617,54 @@ EOF
     return "${rc}"
 }
 
+singbox_v2rayapi_download() {
+    local arch tmp_dir
+    arch="$(singbox_arch)"
+    tmp_dir="$(mktemp -d)"
+    local url="https://github.com/${panel_repo}/releases/latest/download/sing-box-v2rayapi-linux-${arch}"
+    echo -e "${OK} ${GreenBG} 正在下载带 v2ray_api 的 sing-box (linux-${arch}) ... ${Font}"
+    if ! curl -L -q --retry 5 --retry-delay 10 --retry-max-time 60 -o "${tmp_dir}/sing-box" "${url}"; then
+        echo -e "${Error} ${RedBG} 下载失败: ${url} ${Font}"
+        rm -rf "${tmp_dir}"
+        return 1
+    fi
+    chmod +x "${tmp_dir}/sing-box"
+    if curl -L -q --retry 3 --retry-delay 5 -o "${tmp_dir}/sing-box.sha256" "${url}.sha256" 2>/dev/null; then
+        local expected actual
+        expected="$(awk '{print $1}' "${tmp_dir}/sing-box.sha256")"
+        actual="$(sha256sum "${tmp_dir}/sing-box" | awk '{print $1}')"
+        if [[ -n "${expected}" && "${expected}" != "${actual}" ]]; then
+            echo -e "${Error} ${RedBG} sing-box 校验失败 ${Font}"
+            rm -rf "${tmp_dir}"
+            return 1
+        fi
+    fi
+    if [[ -f "${singbox_bin_dir}" ]]; then
+        cp -f "${singbox_bin_dir}" "${singbox_bin_dir}.bak" 2>/dev/null
+        echo -e "${OK} ${GreenBG} 原 sing-box 已备份为 ${singbox_bin_dir}.bak ${Font}"
+    fi
+    install -m 755 "${tmp_dir}/sing-box" "${singbox_bin_dir}"
+    rm -rf "${tmp_dir}"
+    judge "sing-box (v2ray_api) 替换"
+    return 0
+}
+
+singbox_v2rayapi_ensure() {
+    [[ -f "${singbox_conf}" ]] || return 0
+    singbox_has_v2ray_api && return 0
+    local confirm=""
+    echo -e "${Red} 当前 sing-box 未编译 v2ray_api，AnyTLS 每用户流量统计不可用。 ${Font}"
+    read -rp "是否下载带 v2ray_api 的 sing-box 并替换（默认 Y，原二进制备份为 .bak）? [Y/n]: " confirm
+    [[ -z "${confirm}" ]] && confirm="Y"
+    case "${confirm}" in
+    [yY][eE][sS] | [yY])
+        singbox_v2rayapi_download || echo -e "${Error} ${RedBG} 下载失败，AnyTLS 每用户统计仍不可用（可稍后重试） ${Font}"
+        ;;
+    *) ;;
+    esac
+    return 0
+}
+
 panel_download() {
     local arch tmp_dir
     arch="$(singbox_arch)"
@@ -762,6 +810,7 @@ panel_install() {
     mkdir -p /var/log/sing-box
     panel_nginx_location_add
     panel_systemd
+    singbox_v2rayapi_ensure
     [[ -f "${v2ray_conf}" ]] && v2ray_conf_add
     [[ -f "${singbox_conf}" ]] && anytls_conf_add
     systemctl restart v2ray >/dev/null 2>&1
@@ -771,8 +820,7 @@ panel_install() {
     judge "面板启动"
     systemctl restart nginx >/dev/null 2>&1
     if [[ -f "${singbox_conf}" ]] && ! singbox_has_v2ray_api; then
-        echo -e "${Red} 提示：当前 sing-box 未编译 v2ray_api，AnyTLS 每用户流量统计不可用（连接日志仍可查看）。 ${Font}"
-        echo -e "${Red} 如需启用，请使用 -tags with_v2ray_api 编译的 sing-box（参见仓库提供的构建工作流）。 ${Font}"
+        echo -e "${Red} 提示：sing-box 未编译 v2ray_api，AnyTLS 每用户流量统计不可用（连接日志仍可查看）。 ${Font}"
     fi
     local domain=""
     [[ -f "${v2ray_qr_config_file}" ]] && domain="$(grep '\"add\"' "${v2ray_qr_config_file}" | awk -F '"' '{print $4}')"

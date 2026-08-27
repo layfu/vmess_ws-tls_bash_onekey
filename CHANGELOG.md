@@ -3,6 +3,7 @@
 * 面板展示每用户上行/下行/总量与趋势、在线状态、最近连接日志（来源 IP → 目标）
 * v2fly 通过 `api`+`stats`+`policy` 注入统计接口；sing-box 通过 `experimental.v2ray_api`（需 `with_v2ray_api` 构建）
 * 新增「安装与升级」菜单第 7/8 项（安装/升级面板）、「其他」菜单第 5 项（修改面板密码）
+* 安装面板时自动检测 sing-box 是否含 v2ray_api，缺失则提示下载 `sing-box-v2rayapi-linux-<arch>` 替换（原二进制备份为 `.bak`）
 * 新增 `.github/workflows/panel-release.yml` 与 `singbox-release.yml`（构建面板与带 v2ray_api 的 sing-box）
 
 ## 2026-08-26
