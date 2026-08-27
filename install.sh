@@ -31,7 +31,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.8.1"
+shell_version="1.6.8.2"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -886,6 +886,11 @@ panel_update() {
     if panel_download; then
         panel_config_gen
         nginx_ws_access_log_add
+        singbox_v2rayapi_ensure
+        [[ -f "${v2ray_conf}" ]] && v2ray_conf_add
+        [[ -f "${singbox_conf}" ]] && anytls_conf_add
+        systemctl restart v2ray >/dev/null 2>&1
+        [[ -f "${singbox_systemd_file}" ]] && systemctl restart sing-box >/dev/null 2>&1
         systemctl start panel >/dev/null 2>&1
         judge "面板升级"
         systemctl restart nginx >/dev/null 2>&1
@@ -2467,7 +2472,7 @@ v2ray_conf_add() {
         api_obj='"api": { "tag": "api", "services": ["StatsService"] },'
         api_inbound=', { "listen": "127.0.0.1", "port": '"${panel_v2ray_api_port}"', "protocol": "dokodemo-door", "settings": { "address": "127.0.0.1" }, "tag": "api" }'
         if [[ -n "${routing_rules_json}" ]]; then
-            routing_rules_json="${routing_rules_json},{ \"type\": \"field\", \"inboundTag\": [\"api\"], \"outboundTag\": \"api\" }"
+            routing_rules_json="{ \"type\": \"field\", \"inboundTag\": [\"api\"], \"outboundTag\": \"api\" },${routing_rules_json}"
         else
             routing_rules_json="{ \"type\": \"field\", \"inboundTag\": [\"api\"], \"outboundTag\": \"api\" }"
         fi
