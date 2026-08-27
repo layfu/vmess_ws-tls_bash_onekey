@@ -18,8 +18,10 @@ var v2rayEmailRe = regexp.MustCompile(`email:\s*(\S+)`)
 
 // sing-box info log line for an AnyTLS inbound connection:
 //
-//	+0800 2026-08-27 12:00:00 INFO [id 12s] inbound/anytls[anytls-in]: [user1] inbound connection to tcp://example.com:443
-var sbInboundRe = regexp.MustCompile(`(?:\[([^\]]+)\]\s+)?inbound connection to (\S+)`)
+//	+0800 2026-08-27 12:00:00 INFO [id 12s] inbound/anytls[anytls-in]: [user1] inbound connection from 1.2.3.4:12345 to example.com:443
+//
+// Older/官方 sing-box 只记录 "inbound connection to {dest}"（无来源），此时 source 为空。
+var sbInboundRe = regexp.MustCompile(`(?:\[([^\]]+)\]\s+)?inbound connection (?:from (\S+) )?to (\S+)`)
 
 func parseV2rayLine(line string) (protocol, username, source, target string, ok bool) {
 	m := v2rayRe.FindStringSubmatch(line)
@@ -48,11 +50,12 @@ func parseSingboxLine(line string) (protocol, username, source, target string, o
 		return "", "", "", "", false
 	}
 	username = m[1]
-	target = stripScheme(m[2])
+	source = stripScheme(m[2])
+	target = stripScheme(m[3])
 	if target == "" {
 		return "", "", "", "", false
 	}
-	return "anytls", username, "", target, true
+	return "anytls", username, source, target, true
 }
 
 func stripScheme(s string) string {

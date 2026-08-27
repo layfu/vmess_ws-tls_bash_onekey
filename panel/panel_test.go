@@ -71,18 +71,25 @@ func TestParseV2rayLine(t *testing.T) {
 }
 
 func TestParseSingboxLine(t *testing.T) {
-	withUser := "+0800 2026-08-27 12:00:00 INFO [123 12s] inbound/anytls[anytls-in]: [user1] inbound connection to tcp://example.com:443"
+	withUser := "+0800 2026-08-27 12:00:00 INFO [123 12s] inbound/anytls[anytls-in]: [user1] inbound connection from 1.2.3.4:54321 to example.com:443"
 	p, u, src, dst, ok := parseSingboxLine(withUser)
 	if !ok {
 		t.Fatalf("expected ok")
 	}
-	if p != "anytls" || u != "user1" || src != "" || dst != "example.com:443" {
+	if p != "anytls" || u != "user1" || src != "1.2.3.4:54321" || dst != "example.com:443" {
 		t.Errorf("got %q %q %q %q", p, u, src, dst)
 	}
 
-	noUser := "INFO inbound/anytls[anytls-in]: inbound connection to tcp://1.2.3.4:443"
-	_, u2, _, dst2, ok := parseSingboxLine(noUser)
-	if !ok || u2 != "" || dst2 != "1.2.3.4:443" {
-		t.Errorf("got %q %q %v", u2, dst2, ok)
+	// 官方 sing-box 不记录来源（只有目标）
+	noSource := "INFO inbound/anytls[anytls-in]: [user1] inbound connection to example.com:443"
+	p, u, src, dst, ok = parseSingboxLine(noSource)
+	if !ok || p != "anytls" || u != "user1" || src != "" || dst != "example.com:443" {
+		t.Errorf("got %q %q %q %q %v", p, u, src, dst, ok)
+	}
+
+	noUser := "INFO inbound/anytls[anytls-in]: inbound connection from 5.6.7.8:9999 to 1.2.3.4:443"
+	_, u2, src2, dst2, ok := parseSingboxLine(noUser)
+	if !ok || u2 != "" || src2 != "5.6.7.8:9999" || dst2 != "1.2.3.4:443" {
+		t.Errorf("got %q %q %q %v", u2, src2, dst2, ok)
 	}
 }

@@ -79,7 +79,7 @@ AnyTLS = anytls, your.domain.com, 8443, password=xxxxxxxxxxxxxxxx, sni=your.doma
 
 - 面板二进制从本仓库 Releases 下载（`panel-linux-<arch>`），通过 systemd 常驻，监听 `127.0.0.1:2052`，由 Nginx 反代并做 Basic Auth。
 - 安装面板时会自动在 v2fly / sing-box 配置中注入统计接口（v2fly `api`+`stats`+`policy`；sing-box `experimental.v2ray_api`），并重启对应服务。
-- VMess 每用户流量开箱即用；**AnyTLS 每用户流量需要带 `with_v2ray_api` 标签编译的 sing-box**（官方二进制默认不含）。安装面板时脚本会自动检测：若当前 sing-box 不含 v2ray_api，会提示下载 `sing-box-v2rayapi-linux-<arch>`（由 `.github/workflows/singbox-release.yml` 构建）并替换（原二进制备份为 `sing-box.bak`）。未启用时 AnyTLS 仍可查看连接日志（来源 IP 暂不可得）。
+- VMess 每用户流量开箱即用；**AnyTLS 每用户流量与来源 IP 需要定制 sing-box**（官方二进制默认不含 v2ray_api，且 AnyTLS 连接日志不含来源地址）。安装面板时脚本会自动检测：若当前 sing-box 不含 v2ray_api，会提示下载 `sing-box-v2rayapi-linux-<arch>`（由 `.github/workflows/singbox-release.yml` 构建，已内置来源地址日志补丁）并替换（原二进制备份为 `sing-box.bak`）。使用官方 sing-box 时 AnyTLS 仅能查看连接目标（无来源 IP、无每用户流量）。
 - 修改面板密码：`其他` 菜单 → `5 修改 面板密码`；卸载面板：`其他` → `1 卸载`。
 
 ### 常用命令
