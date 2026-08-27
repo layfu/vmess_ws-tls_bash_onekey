@@ -47,13 +47,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: SagerNet/sing-box
-          fetch-depth: 0
 
-      - name: Get latest sing-box release
+      - name: Determine and checkout sing-box version
         run: |
-          TAG=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep -o '"tag_name":"[^"]*"' | head -1 | cut -d'"' -f4)
+          TAG=$(git ls-remote --tags origin 'refs/tags/v*' | sed 's|.*refs/tags/||; s|\^{}||' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          if [ -z "$TAG" ]; then TAG="v1.13.19"; fi
           echo "SINGBOX_TAG=${TAG}" >> "$GITHUB_ENV"
-          git checkout "$TAG"
+          git fetch --depth 1 origin "refs/tags/${TAG}:refs/tags/${TAG}"
+          git checkout "${TAG}"
 
       - uses: actions/setup-go@v5
         with:
@@ -67,7 +68,7 @@ jobs:
           GOARM: ${{ matrix.goarm }}
         run: |
           go build -trimpath -ldflags "-s -w" \
-            -tags "with_v2ray_api,with_clash_api,with_utls,with_reality_server,with_acme" \
+            -tags "with_v2ray_api,with_clash_api,with_utls,with_acme" \
             -o "sing-box-v2rayapi-linux-${{ matrix.arch }}" ./cmd/sing-box
           sha256sum "sing-box-v2rayapi-linux-${{ matrix.arch }}" > "sing-box-v2rayapi-linux-${{ matrix.arch }}.sha256"
 
