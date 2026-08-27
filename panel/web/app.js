@@ -164,15 +164,17 @@ function drawChart(buckets) {
     const h = (total / max) * plotH;
     const x = margin.left + i * bw;
     const y = margin.top + plotH - h;
+    const tip = `${fmtHourLabel(b.hour)}  上行 ${fmtBytes(b.up)}  下行 ${fmtBytes(b.down)}`;
     if (b.up > 0) {
-      svg.appendChild(rect(svgNS, x + 1, y, Math.max(bw - 2, 1), (b.up / max) * plotH, '#38d39f'));
+      const r = rect(svgNS, x + 1, y, Math.max(bw - 2, 1), (b.up / max) * plotH, '#38d39f');
+      r.appendChild(titleEl(svgNS, tip));
+      svg.appendChild(r);
     }
     if (b.down > 0) {
-      svg.appendChild(rect(svgNS, x + 1, y + (b.up / max) * plotH, Math.max(bw - 2, 1), (b.down / max) * plotH, '#5aa2ff'));
+      const r = rect(svgNS, x + 1, y + (b.up / max) * plotH, Math.max(bw - 2, 1), (b.down / max) * plotH, '#5aa2ff');
+      r.appendChild(titleEl(svgNS, tip));
+      svg.appendChild(r);
     }
-    const title = document.createElementNS(svgNS, 'title');
-    title.textContent = `${fmtHourLabel(b.hour)}  上行 ${fmtBytes(b.up)}  下行 ${fmtBytes(b.down)}`;
-    svg.appendChild(title);
   }
 
   // X 轴：时间刻度
@@ -208,6 +210,12 @@ function rect(svgNS, x, y, w, h, fill) {
   r.setAttribute('height', Math.max(h, 0));
   r.setAttribute('fill', fill);
   return r;
+}
+
+function titleEl(svgNS, content) {
+  const t = document.createElementNS(svgNS, 'title');
+  t.textContent = content;
+  return t;
 }
 
 function escapeHtml(s) {
