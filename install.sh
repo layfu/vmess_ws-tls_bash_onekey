@@ -31,7 +31,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.5.2"
+shell_version="1.6.6.0"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -78,6 +78,19 @@ nginx_version="1.30.4"
 openssl_version="3.5.7"
 jemalloc_version="5.3.1"
 old_config_status="off"
+# 流量面板
+panel_bin_dir="/usr/local/bin/panel"
+panel_conf_dir="/etc/panel"
+panel_conf="${panel_conf_dir}/config.json"
+panel_db_dir="/var/lib/panel"
+panel_db="${panel_db_dir}/panel.db"
+panel_systemd_file="/etc/systemd/system/panel.service"
+panel_auth_file="/etc/panel/panel.htpasswd"
+panel_listen_addr="127.0.0.1:2052"
+panel_v2ray_api_port="50085"
+panel_singbox_api_port="50086"
+singbox_log_file="/var/log/sing-box/sing-box.log"
+panel_repo="layfu/vmess_ws-tls_bash_onekey"
 # v2ray_plugin_version="$(wget -qO- "https://github.com/shadowsocks/v2ray-plugin/tags" | grep -E "/shadowsocks/v2ray-plugin/releases/tag/" | head -1 | sed -r 's/.*tag\/v(.+)\">.*/\1/')"
 
 #移动旧版本配置信息 对小于 1.1.0 版本适配
@@ -585,6 +598,215 @@ singbox_update() {
     local new_ver
     new_ver="$(${singbox_bin_dir} version -n 2>/dev/null | head -n 1)"
     echo -e "${OK} ${GreenBG} sing-box 已升级至 ${new_ver} ${Font}"
+}
+
+panel_installed() {
+    [[ -f "${panel_bin_dir}" ]]
+}
+
+singbox_has_v2ray_api() {
+    [[ -x "${singbox_bin_dir}" ]] || return 1
+    local tmp
+    tmp="$(mktemp)"
+    cat >"${tmp}" <<'EOF'
+{ "experimental": { "v2ray_api": { "listen": "127.0.0.1:50086", "stats": { "enabled": true } } } }
+EOF
+    "${singbox_bin_dir}" check -c "${tmp}" >/dev/null 2>&1
+    local rc=$?
+    rm -f "${tmp}"
+    return "${rc}"
+}
+
+panel_download() {
+    local arch tmp_dir
+    arch="$(singbox_arch)"
+    tmp_dir="$(mktemp -d)"
+    local url="https://github.com/${panel_repo}/releases/latest/download/panel-linux-${arch}"
+    echo -e "${OK} ${GreenBG} 正在下载流量面板 (linux-${arch}) ... ${Font}"
+    if ! curl -L -q --retry 5 --retry-delay 10 --retry-max-time 60 -o "${tmp_dir}/panel" "${url}"; then
+        echo -e "${Error} ${RedBG} 面板下载失败: ${url} ${Font}"
+        echo -e "${Red} 请先在 GitHub 仓库打 tag 发布 panel 二进制，或手动放入 ${panel_bin_dir} ${Font}"
+        rm -rf "${tmp_dir}"
+        return 1
+    fi
+    chmod +x "${tmp_dir}/panel"
+    if curl -L -q --retry 3 --retry-delay 5 -o "${tmp_dir}/panel.sha256" "${url}.sha256" 2>/dev/null; then
+        local expected actual
+        expected="$(awk '{print $1}' "${tmp_dir}/panel.sha256")"
+        actual="$(sha256sum "${tmp_dir}/panel" | awk '{print $1}')"
+        if [[ -n "${expected}" && "${expected}" != "${actual}" ]]; then
+            echo -e "${Error} ${RedBG} 面板校验失败 ${Font}"
+            rm -rf "${tmp_dir}"
+            return 1
+        fi
+    fi
+    install -m 755 "${tmp_dir}/panel" "${panel_bin_dir}"
+    rm -rf "${tmp_dir}"
+    judge "面板安装"
+    return 0
+}
+
+panel_config_gen() {
+    mkdir -p "${panel_conf_dir}" "${panel_db_dir}"
+    local v2ray_enabled="false" singbox_enabled="false"
+    [[ -f "${v2ray_conf}" ]] && v2ray_enabled="true"
+    [[ -f "${singbox_conf}" ]] && singbox_enabled="true"
+    cat >"${panel_conf}" <<EOF
+{
+  "listen": "${panel_listen_addr}",
+  "db_path": "${panel_db}",
+  "poll_interval_sec": 15,
+  "online_window_sec": 90,
+  "v2ray": {
+    "enabled": ${v2ray_enabled},
+    "api_addr": "127.0.0.1:${panel_v2ray_api_port}",
+    "access_log": "/var/log/v2ray/access.log",
+    "users_file": "/etc/v2ray/users"
+  },
+  "singbox": {
+    "enabled": ${singbox_enabled},
+    "api_addr": "127.0.0.1:${panel_singbox_api_port}",
+    "log_file": "${singbox_log_file}",
+    "users_file": "/etc/sing-box/users"
+  }
+}
+EOF
+    judge "面板配置生成"
+}
+
+panel_auth_set() {
+    local panel_user="" panel_pass=""
+    read -rp "请输入面板登录用户名（default:admin）:" panel_user
+    [[ -z "${panel_user}" ]] && panel_user="admin"
+    read -rp "请输入面板登录密码（留空则随机生成）:" panel_pass
+    if [[ -z "${panel_pass}" ]]; then
+        panel_pass="$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 12)"
+    fi
+    mkdir -p "${panel_conf_dir}"
+    local salt hash
+    salt="$(head -c 8 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 8)"
+    hash="$(openssl passwd -apr1 -salt "${salt}" "${panel_pass}" 2>/dev/null)"
+    if [[ -z "${hash}" ]]; then
+        echo -e "${Error} ${RedBG} 生成密码哈希失败（openssl 不可用） ${Font}"
+        return 1
+    fi
+    printf '%s:%s\n' "${panel_user}" "${hash}" >"${panel_auth_file}"
+    echo -e "${OK} ${GreenBG} 面板登录账号: ${panel_user}  密码: ${panel_pass} ${Font}"
+    echo -e "${Red} 请妥善保存上述密码 ${Font}"
+}
+
+panel_nginx_location_add() {
+    [[ -f "${nginx_conf}" ]] || return 0
+    grep -q 'location /panel/' "${nginx_conf}" && return 0
+    local tmpfile
+    tmpfile="$(mktemp)"
+    cat >"${tmpfile}" <<EOF
+        location = /panel { return 301 /panel/; }
+        location /panel/ {
+            auth_basic "Panel";
+            auth_basic_user_file ${panel_auth_file};
+            proxy_pass http://${panel_listen_addr}/;
+            proxy_http_version 1.1;
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header Upgrade \$http_upgrade;
+            proxy_set_header Connection "upgrade";
+        }
+EOF
+    awk 'NR==FNR { block=block $0 "\n"; next } /^}[[:space:]]*$/ && !done { printf "%s", block; done=1 } { print }' "${tmpfile}" "${nginx_conf}" >"${nginx_conf}.panel.tmp"
+    rm -f "${tmpfile}"
+    mv "${nginx_conf}.panel.tmp" "${nginx_conf}"
+    judge "Nginx /panel/ 反代配置"
+}
+
+panel_nginx_location_del() {
+    [[ -f "${nginx_conf}" ]] || return 0
+    grep -q 'location /panel/' "${nginx_conf}" || return 0
+    sed -i '/location = \/panel { return 301 \/panel\/; }/d' "${nginx_conf}"
+    awk '
+        BEGIN { skip = 0 }
+        /location \/panel\/ \{/ { skip = 1 }
+        !skip { print }
+        skip && /^[[:space:]]*\}/ { skip = 0 }
+    ' "${nginx_conf}" >"${nginx_conf}.panel.tmp" && mv "${nginx_conf}.panel.tmp" "${nginx_conf}"
+}
+
+panel_systemd() {
+    cat >"${panel_systemd_file}" <<EOF
+[Unit]
+Description=Traffic Panel
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=${panel_bin_dir} -c ${panel_conf}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    judge "面板 systemd 配置"
+}
+
+panel_install() {
+    if ! panel_installed; then
+        panel_download || return 1
+    fi
+    panel_config_gen
+    if [[ ! -f "${panel_auth_file}" ]]; then
+        panel_auth_set
+    fi
+    mkdir -p /var/log/sing-box
+    panel_nginx_location_add
+    panel_systemd
+    [[ -f "${v2ray_conf}" ]] && v2ray_conf_add
+    [[ -f "${singbox_conf}" ]] && anytls_conf_add
+    systemctl restart v2ray >/dev/null 2>&1
+    [[ -f "${singbox_systemd_file}" ]] && systemctl restart sing-box >/dev/null 2>&1
+    systemctl enable panel >/dev/null 2>&1
+    systemctl restart panel
+    judge "面板启动"
+    systemctl restart nginx >/dev/null 2>&1
+    if [[ -f "${singbox_conf}" ]] && ! singbox_has_v2ray_api; then
+        echo -e "${Red} 提示：当前 sing-box 未编译 v2ray_api，AnyTLS 每用户流量统计不可用（连接日志仍可查看）。 ${Font}"
+        echo -e "${Red} 如需启用，请使用 -tags with_v2ray_api 编译的 sing-box（参见仓库提供的构建工作流）。 ${Font}"
+    fi
+    local domain=""
+    [[ -f "${v2ray_qr_config_file}" ]] && domain="$(grep '\"add\"' "${v2ray_qr_config_file}" | awk -F '"' '{print $4}')"
+    [[ -z "${domain}" && -f "${anytls_domain_file}" ]] && domain="$(cat "${anytls_domain_file}")"
+    echo -e "${Green} 面板访问地址: ${Font} https://${domain}/panel/"
+}
+
+panel_update() {
+    if ! panel_installed; then
+        echo -e "${Error} ${RedBG} 面板未安装，请先安装 ${Font}"
+        return 1
+    fi
+    systemctl stop panel >/dev/null 2>&1
+    if panel_download; then
+        panel_config_gen
+        systemctl start panel >/dev/null 2>&1
+        judge "面板升级"
+    else
+        systemctl start panel >/dev/null 2>&1
+        return 1
+    fi
+}
+
+panel_uninstall() {
+    systemctl disable panel >/dev/null 2>&1
+    systemctl stop panel >/dev/null 2>&1
+    rm -f "${panel_systemd_file}"
+    rm -f "${panel_bin_dir}"
+    panel_nginx_location_del
+    [[ -f "${v2ray_conf}" ]] && v2ray_conf_add && systemctl restart v2ray >/dev/null 2>&1
+    [[ -f "${singbox_conf}" ]] && anytls_conf_add && [[ -f "${singbox_systemd_file}" ]] && systemctl restart sing-box >/dev/null 2>&1
+    systemctl restart nginx >/dev/null 2>&1
+    systemctl daemon-reload
+    echo -e "${OK} ${GreenBG} 已卸载流量面板（配置与历史数据库已保留，可重新安装恢复） ${Font}"
 }
 
 anytls_port_set() {
@@ -1231,11 +1453,41 @@ anytls_conf_add() {
     rule_set_json="$(anytls_routing_rule_set_gen)"
     [[ "${anytls_warp_mode}" == "all" ]] && route_final="warp"
 
+    local panel_log_output="" panel_experimental=""
+    if panel_installed; then
+        panel_log_output=",
+    \"output\": \"${singbox_log_file}\""
+    fi
+    if panel_installed && singbox_has_v2ray_api; then
+        local stats_users_json="" su first_su=1
+        while read -r su _; do
+            [[ -z "${su}" ]] && continue
+            if [[ ${first_su} -eq 1 ]]; then first_su=0; else stats_users_json="${stats_users_json},"; fi
+            stats_users_json="${stats_users_json}\"${su}\""
+        done <"${anytls_users_file}"
+        panel_experimental=$(
+            cat <<PANEL_EXP
+,
+  "experimental": {
+    "v2ray_api": {
+      "listen": "127.0.0.1:${panel_singbox_api_port}",
+      "stats": {
+        "enabled": true,
+        "inbounds": ["anytls-in"],
+        "outbounds": ["direct", "block", "warp"],
+        "users": [${stats_users_json}]
+      }
+    }
+  }
+PANEL_EXP
+        )
+    fi
+
     cat >${singbox_conf} <<EOF
 {
   "log": {
     "level": "info",
-    "timestamp": true
+    "timestamp": true${panel_log_output}
   },
   "inbounds": [
     {
@@ -1278,7 +1530,7 @@ anytls_conf_add() {
       ${routing_rules_json}
     ],
     "final": "${route_final}"
-  }
+  }${panel_experimental}
 }
 EOF
     judge "sing-box 配置写入"
@@ -2108,8 +2360,24 @@ v2ray_conf_add() {
     routing_ds="$(routing_domain_strategy)"
     sniffing_json="$(routing_sniffing_gen)"
 
+    local stats_json="" policy_json="" api_obj="" api_inbound=""
+    if panel_installed; then
+        stats_json='"stats": {},'
+        policy_json='"policy": { "levels": { "0": { "statsUserUplink": true, "statsUserDownlink": true } } },'
+        api_obj='"api": { "tag": "api", "services": ["StatsService"] },'
+        api_inbound=', { "listen": "127.0.0.1", "port": '"${panel_v2ray_api_port}"', "protocol": "dokodemo-door", "settings": { "address": "127.0.0.1" }, "tag": "api" }'
+        if [[ -n "${routing_rules_json}" ]]; then
+            routing_rules_json="${routing_rules_json},{ \"type\": \"field\", \"inboundTag\": [\"api\"], \"outboundTag\": \"api\" }"
+        else
+            routing_rules_json="{ \"type\": \"field\", \"inboundTag\": [\"api\"], \"outboundTag\": \"api\" }"
+        fi
+    fi
+
     cat >${v2ray_conf} <<EOF
 {
+  ${stats_json}
+  ${policy_json}
+  ${api_obj}
   "log": {
     "access": "/var/log/v2ray/access.log",
     "error": "/var/log/v2ray/error.log",
@@ -2133,7 +2401,7 @@ ${sniffing_json}
           "path": "${camouflage}"
         }
       }
-    }
+    }${api_inbound}
   ],
   "outbounds": [
     { "protocol": "freedom", "settings": {}, "tag": "direct" },
@@ -2585,6 +2853,18 @@ uninstall_all() {
             warp_uninstall
             uninstalled_any=1
             echo -e "${OK} ${Green} 已卸载 WARP ${Font}"
+            ;;
+        *) ;;
+
+        esac
+    fi
+    if panel_installed || [[ -f "${panel_systemd_file}" ]]; then
+        echo -e "${OK} ${Green} 是否卸载流量面板 [Y/N]? ${Font}"
+        read -r uninstall_panel
+        case $uninstall_panel in
+        [yY][eE][sS] | [yY])
+            panel_uninstall
+            uninstalled_any=1
             ;;
         *) ;;
 
@@ -3365,6 +3645,8 @@ install_menu() {
         echo -e "${Green}4.${Font} 升级 sing-box"
         echo -e "${Green}5.${Font} 升级 Nginx"
         echo -e "${Green}6.${Font} 安装/卸载 WARP"
+        echo -e "${Green}7.${Font} 安装 流量面板"
+        echo -e "${Green}8.${Font} 升级 流量面板"
         echo -e "${Green}0.${Font} 返回上级菜单 \n"
         read -rp "请输入数字：" sub_num
         case ${sub_num} in
@@ -3386,6 +3668,12 @@ install_menu() {
             ;;
         6)
             warp_menu
+            ;;
+        7)
+            panel_install
+            ;;
+        8)
+            panel_update
             ;;
         0)
             break
@@ -3540,6 +3828,7 @@ other_menu() {
         echo -e "${Green}2.${Font} 更新 geoip.dat 和 geosite.dat"
         echo -e "${Green}3.${Font} 更新 sing-box 规则集"
         echo -e "${Green}4.${Font} 升级 脚本"
+        echo -e "${Green}5.${Font} 修改 面板密码"
         echo -e "${Green}0.${Font} 返回上级菜单 \n"
         read -rp "请输入数字：" sub_num
         case ${sub_num} in
@@ -3555,6 +3844,14 @@ other_menu() {
             ;;
         4)
             update_sh
+            ;;
+        5)
+            if panel_installed; then
+                panel_auth_set
+                systemctl restart nginx >/dev/null 2>&1
+            else
+                echo -e "${Error} ${RedBG} 面板未安装 ${Font}"
+            fi
             ;;
         0)
             break

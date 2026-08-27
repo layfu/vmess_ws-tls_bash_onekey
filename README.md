@@ -23,6 +23,7 @@ wget -N --no-check-certificate -q -O install.sh "https://raw.githubusercontent.c
 - 新增 AnyTLS 协议（基于 sing-box），复用 Let's Encrypt 证书，不自签证书
 - VMess / AnyTLS 均支持多用户管理
 - VMess / AnyTLS 均支持路由规则（屏蔽国内/广告/BT/自定义域名/IP）
+- 新增流量面板（单文件 Go 静态二进制），可视化每用户流量、在线状态、连接日志
 
 ### 管理脚本
 
@@ -64,6 +65,23 @@ AnyTLS = anytls, your.domain.com, 8443, password=xxxxxxxxxxxxxxxx, sni=your.doma
 
 > WARP 隧道为系统级，两协议共用；出站开关与用户列表各自独立。WARP 控制面显示 `Connected` 不代表转发正常，脚本通过 SOCKS 探活 `warp=on` 校验。可安装自愈守护（systemd timer 每 60s 检测，异常自动重启 `warp-svc`）。
 
+### 流量面板
+
+一个单文件 Go 静态二进制面板，复用现有 Nginx + Let's Encrypt 证书，在 `https://你的域名/panel/` 提供带 Basic Auth 的网页仪表盘：
+
+- 每用户流量统计（上行/下行/总量 + 24h/3天/7天趋势）
+- 在线状态与最近连接日志（客户端来源 IP → 访问目标域名/IP）
+- VMess（v2fly）与 AnyTLS（sing-box）分别统计
+
+**安装**：进入管理菜单 → `1 安装与升级` → `7 安装 流量面板`，按提示设置登录账号密码即可。访问 `https://你的域名/panel/`。
+
+**说明**：
+
+- 面板二进制从本仓库 Releases 下载（`panel-linux-<arch>`），通过 systemd 常驻，监听 `127.0.0.1:2052`，由 Nginx 反代并做 Basic Auth。
+- 安装面板时会自动在 v2fly / sing-box 配置中注入统计接口（v2fly `api`+`stats`+`policy`；sing-box `experimental.v2ray_api`），并重启对应服务。
+- VMess 每用户流量开箱即用；**AnyTLS 每用户流量需要带 `with_v2ray_api` 标签编译的 sing-box**（官方二进制默认不含）。仓库提供 `.github/workflows/singbox-release.yml` 自动构建该版本，产物为 `sing-box-v2rayapi-linux-<arch>`，替换 `/usr/local/bin/sing-box` 后重装面板即可。未启用时 AnyTLS 仍可查看连接日志（来源 IP 暂不可得）。
+- 修改面板密码：`其他` 菜单 → `5 修改 面板密码`；卸载面板：`其他` → `1 卸载`。
+
 ### 常用命令
 
 ```bash
@@ -90,6 +108,10 @@ systemctl restart sing-box # 重启 sing-box (AnyTLS)
 | `/etc/sing-box/block_domains` `/etc/sing-box/block_ips` | AnyTLS 自定义屏蔽域名/IP |
 | `/etc/sing-box/warp_users` | AnyTLS WARP 用户列表（user 模式） |
 | `/etc/sing-box/*.srs` | AnyTLS 路由规则集数据文件 |
+| `/etc/panel/config.json` | 流量面板配置 |
+| `/var/lib/panel/panel.db` | 流量面板历史数据库（SQLite） |
+| `/etc/panel/panel.htpasswd` | 面板 Basic Auth 账号文件 |
+| `/usr/local/bin/panel` | 流量面板二进制 |
 | `/etc/nginx/` | Nginx 目录 |
 | `/home/wwwroot/3DCEList` | Web 伪装站点 |
 | `/data/v2ray.crt` `/data/v2ray.key` | SSL 证书 |

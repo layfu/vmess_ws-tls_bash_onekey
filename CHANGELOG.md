@@ -1,3 +1,10 @@
+## 2026-08-27
+* 新增流量面板：单文件 Go 静态二进制，复用 Nginx + 证书，`https://域名/panel/` 访问（Basic Auth）
+* 面板展示每用户上行/下行/总量与趋势、在线状态、最近连接日志（来源 IP → 目标）
+* v2fly 通过 `api`+`stats`+`policy` 注入统计接口；sing-box 通过 `experimental.v2ray_api`（需 `with_v2ray_api` 构建）
+* 新增「安装与升级」菜单第 7/8 项（安装/升级面板）、「其他」菜单第 5 项（修改面板密码）
+* 新增 `.github/workflows/panel-release.yml` 与 `singbox-release.yml`（构建面板与带 v2ray_api 的 sing-box）
+
 ## 2026-08-26
 * 修复 AnyTLS WARP `user` 模式不生效：sing-box 路由匹配入站用户名应用 `auth_user` 字段（`user` 匹配的是 Linux 系统用户，永远不命中）
 
