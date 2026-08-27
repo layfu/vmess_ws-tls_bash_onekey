@@ -98,9 +98,10 @@ async function refreshChart() {
   const series = data.series || {};
 
   const now = new Date();
-  const startHour = Math.floor(now.getTime() / 3600000) - hours + 1;
+  const nowHour = Math.floor(now.getTime() / 3600000) * 3600;
+  const startHour = nowHour - (hours - 1) * 3600;
   const buckets = [];
-  for (let h = startHour; h <= Math.floor(now.getTime() / 3600000); h++) {
+  for (let h = startHour; h <= nowHour; h += 3600) {
     buckets.push({ hour: h, up: 0, down: 0 });
   }
   const idx = {};

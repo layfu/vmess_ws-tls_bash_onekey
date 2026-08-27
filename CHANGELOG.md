@@ -1,4 +1,5 @@
 ## 2026-08-27
+* 修复流量趋势图空白：前端小时桶改用 Unix 时间戳（与后端 `hour` 字段对齐，原先用「小时序号」导致匹配不上）
 * 修复面板看不到 VMess 用户流量：统计接口改用惰性连接并按轮询重试（避免面板启动时 v2fly 统计接口未就绪导致 VMess 源被永久丢弃）；同时将 v2fly `api` 路由规则置于首位，避免 WARP `all` 模式 catch-all 拦截统计接口
 * 修复 VMess 面板来源 IP 显示 127.0.0.1：新增 Nginx WebSocket 访问日志（`/var/log/nginx/ws-access.log`），面板按时间戳将其与 v2ray 访问日志关联，还原真实客户端 IP
 * 新增流量面板：单文件 Go 静态二进制，复用 Nginx + 证书，`https://域名/panel/` 访问（Basic Auth）
