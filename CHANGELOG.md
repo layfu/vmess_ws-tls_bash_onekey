@@ -1,4 +1,5 @@
 ## 2026-08-27
+* 修复 VMess 面板来源 IP 显示 127.0.0.1：新增 Nginx WebSocket 访问日志（`/var/log/nginx/ws-access.log`），面板按时间戳将其与 v2ray 访问日志关联，还原真实客户端 IP
 * 新增流量面板：单文件 Go 静态二进制，复用 Nginx + 证书，`https://域名/panel/` 访问（Basic Auth）
 * 面板展示每用户上行/下行/总量与趋势、在线状态、最近连接日志（来源 IP → 目标）
 * v2fly 通过 `api`+`stats`+`policy` 注入统计接口；sing-box 通过 `experimental.v2ray_api`（需 `with_v2ray_api` 构建）

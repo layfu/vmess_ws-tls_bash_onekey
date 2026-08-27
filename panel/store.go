@@ -123,6 +123,11 @@ func (s *store) addConnection(protocol, username, source, target string, ts time
 	return err
 }
 
+func (s *store) updateConnectionSource(oldSource, newSource string) error {
+	_, err := s.db.Exec(`UPDATE connections SET source = ? WHERE source = ?`, newSource, oldSource)
+	return err
+}
+
 type totalRow struct {
 	Protocol string
 	Username string

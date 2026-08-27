@@ -31,7 +31,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.7.0"
+shell_version="1.6.8.0"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -90,6 +90,7 @@ panel_listen_addr="127.0.0.1:2052"
 panel_v2ray_api_port="50085"
 panel_singbox_api_port="50086"
 singbox_log_file="/var/log/sing-box/sing-box.log"
+nginx_ws_access_log="/var/log/nginx/ws-access.log"
 panel_repo="layfu/vmess_ws-tls_bash_onekey"
 # v2ray_plugin_version="$(wget -qO- "https://github.com/shadowsocks/v2ray-plugin/tags" | grep -E "/shadowsocks/v2ray-plugin/releases/tag/" | head -1 | sed -r 's/.*tag\/v(.+)\">.*/\1/')"
 
@@ -731,6 +732,7 @@ panel_config_gen() {
     "enabled": ${v2ray_enabled},
     "api_addr": "127.0.0.1:${panel_v2ray_api_port}",
     "access_log": "/var/log/v2ray/access.log",
+    "ws_access_log": "${nginx_ws_access_log}",
     "users_file": "/etc/v2ray/users"
   },
   "singbox": {
@@ -802,6 +804,30 @@ panel_nginx_location_del() {
     ' "${nginx_conf}" >"${nginx_conf}.panel.tmp" && mv "${nginx_conf}.panel.tmp" "${nginx_conf}"
 }
 
+nginx_ws_access_log_add() {
+    [[ -f "${nginx_conf}" ]] || return 0
+    if ! grep -q 'log_format panel_ws' "${nginx_conf}"; then
+        printf "log_format panel_ws '\$remote_addr \$time_iso8601 \$request_uri \$status';\n" >"${nginx_conf}.panel.hdr"
+        cat "${nginx_conf}.panel.hdr" "${nginx_conf}" >"${nginx_conf}.panel.tmp"
+        mv "${nginx_conf}.panel.tmp" "${nginx_conf}"
+        rm -f "${nginx_conf}.panel.hdr"
+    fi
+    if ! grep -q 'ws-access.log' "${nginx_conf}"; then
+        awk -v al="        access_log ${nginx_ws_access_log} panel_ws;" '
+            /proxy_redirect off;/ && !done { print al; done = 1 }
+            { print }
+        ' "${nginx_conf}" >"${nginx_conf}.panel.tmp" && mv "${nginx_conf}.panel.tmp" "${nginx_conf}"
+    fi
+    mkdir -p /var/log/nginx
+    touch "${nginx_ws_access_log}"
+}
+
+nginx_ws_access_log_del() {
+    [[ -f "${nginx_conf}" ]] || return 0
+    sed -i '/ws-access.log/d' "${nginx_conf}"
+    sed -i '/log_format panel_ws/d' "${nginx_conf}"
+}
+
 panel_systemd() {
     cat >"${panel_systemd_file}" <<EOF
 [Unit]
@@ -831,6 +857,7 @@ panel_install() {
     fi
     mkdir -p /var/log/sing-box
     panel_nginx_location_add
+    nginx_ws_access_log_add
     panel_systemd
     singbox_v2rayapi_ensure
     [[ -f "${v2ray_conf}" ]] && v2ray_conf_add
@@ -872,6 +899,7 @@ panel_uninstall() {
     rm -f "${panel_systemd_file}"
     rm -f "${panel_bin_dir}"
     panel_nginx_location_del
+    nginx_ws_access_log_del
     [[ -f "${v2ray_conf}" ]] && v2ray_conf_add && systemctl restart v2ray >/dev/null 2>&1
     [[ -f "${singbox_conf}" ]] && anytls_conf_add && [[ -f "${singbox_systemd_file}" ]] && systemctl restart sing-box >/dev/null 2>&1
     systemctl restart nginx >/dev/null 2>&1

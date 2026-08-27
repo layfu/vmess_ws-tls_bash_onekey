@@ -6,11 +6,12 @@ import (
 )
 
 type ProtocolConfig struct {
-	Enabled   bool   `json:"enabled"`
-	APIAddr   string `json:"api_addr"`
-	AccessLog string `json:"access_log"`
-	LogFile   string `json:"log_file"`
-	UsersFile string `json:"users_file"`
+	Enabled     bool   `json:"enabled"`
+	APIAddr     string `json:"api_addr"`
+	AccessLog   string `json:"access_log"`
+	WSAccessLog string `json:"ws_access_log"`
+	LogFile     string `json:"log_file"`
+	UsersFile   string `json:"users_file"`
 }
 
 type Config struct {
@@ -29,10 +30,11 @@ func defaultConfig() *Config {
 		PollIntervalSec: 15,
 		OnlineWindowSec: 90,
 		V2Ray: ProtocolConfig{
-			Enabled:   false,
-			APIAddr:   "127.0.0.1:50085",
-			AccessLog: "/var/log/v2ray/access.log",
-			UsersFile: "/etc/v2ray/users",
+			Enabled:     false,
+			APIAddr:     "127.0.0.1:50085",
+			AccessLog:   "/var/log/v2ray/access.log",
+			WSAccessLog: "/var/log/nginx/ws-access.log",
+			UsersFile:   "/etc/v2ray/users",
 		},
 		SingBox: ProtocolConfig{
 			Enabled:   false,

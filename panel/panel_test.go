@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"path/filepath"
 	"testing"
+	"time"
 )
 
 func encVarint(buf *bytes.Buffer, v uint64) {
@@ -56,17 +58,31 @@ func TestParseQueryStatsResponse(t *testing.T) {
 
 func TestParseV2rayLine(t *testing.T) {
 	line := "2026/08/27 12:00:00 1.2.3.4:54321 accepted tcp:example.com:443 email: user1"
-	p, u, src, dst, ok := parseV2rayLine(line)
+	p, u, src, dst, ts, ok := parseV2rayLine(line)
 	if !ok {
 		t.Fatalf("expected ok")
 	}
 	if p != "vmess" || u != "user1" || src != "1.2.3.4:54321" || dst != "example.com:443" {
 		t.Errorf("got %q %q %q %q", p, u, src, dst)
 	}
+	if ts <= 0 {
+		t.Errorf("expected positive timestamp, got %d", ts)
+	}
 
 	rej := "2026/08/27 12:00:00 5.6.7.8:9999 rejected  email: user2"
-	if _, _, _, _, ok := parseV2rayLine(rej); ok {
+	if _, _, _, _, _, ok := parseV2rayLine(rej); ok {
 		t.Errorf("rejected line should not be accepted")
+	}
+}
+
+func TestParseNginxWsLine(t *testing.T) {
+	line := "1.2.3.4 2026-08-27T12:00:00+08:00 /e01ec5ea/ 101"
+	ip, ts, ok := parseNginxWsLine(line)
+	if !ok || ip != "1.2.3.4" || ts <= 0 {
+		t.Errorf("got %q %d %v", ip, ts, ok)
+	}
+	if _, _, ok := parseNginxWsLine("garbage"); ok {
+		t.Errorf("garbage should not parse")
 	}
 }
 
@@ -91,5 +107,28 @@ func TestParseSingboxLine(t *testing.T) {
 	_, u2, src2, dst2, ok := parseSingboxLine(noUser)
 	if !ok || u2 != "" || src2 != "5.6.7.8:9999" || dst2 != "1.2.3.4:443" {
 		t.Errorf("got %q %q %q %v", u2, src2, dst2, ok)
+	}
+}
+
+func TestCorrelator(t *testing.T) {
+	st, err := openStore(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	c := newCorrelator(st)
+	now := time.Now().Unix()
+
+	_ = st.addConnection("vmess", "user1", "127.0.0.1:54321", "example.com:443", time.Unix(now, 0))
+	c.addVmess(now, "user1", "example.com:443", "127.0.0.1:54321")
+	c.addWs(now+1, "9.9.9.9")
+
+	rows, err := st.connections(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Source != "9.9.9.9" {
+		t.Errorf("expected source 9.9.9.9, got %+v", rows)
 	}
 }
