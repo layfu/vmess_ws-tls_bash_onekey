@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -187,11 +188,25 @@ type connectionRow struct {
 	Target   string
 }
 
-func (s *store) connections(limit int) ([]connectionRow, error) {
-	rows, err := s.db.Query(
-		`SELECT ts, protocol, username, source, target FROM connections ORDER BY id DESC LIMIT ?`,
-		limit,
-	)
+func (s *store) connections(limit int, protocol, username string) ([]connectionRow, error) {
+	q := `SELECT ts, protocol, username, source, target FROM connections`
+	var args []any
+	var conds []string
+	if protocol != "" {
+		conds = append(conds, `protocol = ?`)
+		args = append(args, protocol)
+	}
+	if username != "" {
+		conds = append(conds, `username = ?`)
+		args = append(args, username)
+	}
+	if len(conds) > 0 {
+		q += ` WHERE ` + strings.Join(conds, ` AND `)
+	}
+	q += ` ORDER BY id DESC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}

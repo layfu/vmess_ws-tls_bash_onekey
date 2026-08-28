@@ -65,8 +65,53 @@ async function refreshOverview() {
   }
 }
 
+let allUsers = [];
+
+function buildConnFilters(users) {
+  allUsers = users;
+  const protoSel = document.getElementById('conn-protocol');
+  const prevProto = protoSel.value;
+  const protos = ['all'];
+  protoSel.innerHTML = '';
+  protoSel.appendChild(option('all', '全部协议'));
+  for (const u of users) {
+    if (!protos.includes(u.protocol)) {
+      protos.push(u.protocol);
+      protoSel.appendChild(option(u.protocol, protoLabel(u.protocol)));
+    }
+  }
+  protoSel.value = protos.includes(prevProto) ? prevProto : 'all';
+  buildConnUserOptions();
+}
+
+function buildConnUserOptions() {
+  const sel = document.getElementById('conn-user');
+  const prev = sel.value;
+  const proto = document.getElementById('conn-protocol').value;
+  const options = ['all'];
+  sel.innerHTML = '';
+  sel.appendChild(option('all', '全部用户'));
+  for (const u of allUsers) {
+    if (proto !== 'all' && u.protocol !== proto) continue;
+    const val = u.protocol + ':' + u.username;
+    options.push(val);
+    sel.appendChild(option(val, protoLabel(u.protocol) + ' · ' + u.username));
+  }
+  sel.value = options.includes(prev) ? prev : 'all';
+}
+
 async function refreshConnections() {
-  const data = await fetchJSON('api/connections');
+  const proto = document.getElementById('conn-protocol').value;
+  const user = document.getElementById('conn-user').value;
+  const qs = [];
+  if (proto !== 'all') qs.push('protocol=' + encodeURIComponent(proto));
+  if (user !== 'all') {
+    const i = user.indexOf(':');
+    qs.push('protocol=' + encodeURIComponent(user.slice(0, i)));
+    qs.push('username=' + encodeURIComponent(user.slice(i + 1)));
+  }
+  const url = qs.length ? 'api/connections?' + qs.join('&') : 'api/connections';
+  const data = await fetchJSON(url);
   const tbody = document.querySelector('#conn-table tbody');
   tbody.innerHTML = '';
   for (const c of data.connections) {
@@ -260,6 +305,7 @@ function escapeHtml(s) {
 async function bootstrap() {
   const ov = await fetchJSON('api/overview');
   buildUserSelect(ov.users);
+  buildConnFilters(ov.users);
   await refreshOverview();
   await refreshConnections();
   await refreshChart();
@@ -267,6 +313,13 @@ async function bootstrap() {
 
 document.getElementById('chart-user').addEventListener('change', refreshChart);
 document.getElementById('chart-hours').addEventListener('change', refreshChart);
+document.getElementById('conn-protocol').addEventListener('change', () => {
+  buildConnUserOptions();
+  refreshConnections().catch(() => {});
+});
+document.getElementById('conn-user').addEventListener('change', () => {
+  refreshConnections().catch(() => {});
+});
 
 let resizeTimer;
 window.addEventListener('resize', () => {

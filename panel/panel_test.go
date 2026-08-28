@@ -124,7 +124,7 @@ func TestCorrelator(t *testing.T) {
 	c.addVmess(now, "user1", "example.com:443", "127.0.0.1:54321")
 	c.addWs(now+1, "9.9.9.9")
 
-	rows, err := st.connections(10)
+	rows, err := st.connections(10, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

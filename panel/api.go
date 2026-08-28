@@ -101,7 +101,9 @@ func (a *api) connections(w http.ResponseWriter, r *http.Request) {
 	if limit > 1000 {
 		limit = 1000
 	}
-	rows, err := a.store.connections(limit)
+	protocol := r.URL.Query().Get("protocol")
+	username := r.URL.Query().Get("username")
+	rows, err := a.store.connections(limit, protocol, username)
 	if err != nil {
 		writeErr(w, err)
 		return
