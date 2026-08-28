@@ -20,6 +20,18 @@ function fmtHourLabel(hour) {
   return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:00`;
 }
 
+function fmtDayLabel(hour) {
+  const d = new Date(hour * 1000);
+  const p = (x) => String(x).padStart(2, '0');
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+function fmtClockLabel(hour) {
+  const d = new Date(hour * 1000);
+  const p = (x) => String(x).padStart(2, '0');
+  return `${p(d.getHours())}:00`;
+}
+
 async function fetchJSON(url) {
   const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) throw new Error(res.statusText);
@@ -130,9 +142,9 @@ function drawChart(buckets) {
   const max = Math.max(1, ...buckets.map((b) => b.up + b.down));
 
   const svgNS = 'http://www.w3.org/2000/svg';
-  const width = el.clientWidth - 16;
-  const height = 260 - 16;
-  const margin = { top: 6, right: 6, bottom: 22, left: 56 };
+  const width = Math.max(el.clientWidth - 16, 420);
+  const height = 264;
+  const margin = { top: 6, right: 6, bottom: 38, left: 56 };
   const plotW = width - margin.left - margin.right;
   const plotH = height - margin.top - margin.bottom;
   const bw = plotW / buckets.length;
@@ -177,10 +189,13 @@ function drawChart(buckets) {
     }
   }
 
-  // X 轴：时间刻度
-  const labelEvery = Math.max(1, Math.ceil(buckets.length / 6));
+  // X 轴：两行时间标签（日期/小时），按柱宽自适应密度，小窗口下避免重叠与裁剪
+  const labelW = 42;
+  const labelEvery = Math.max(1, Math.ceil(labelW / bw));
   for (let i = 0; i < buckets.length; i += labelEvery) {
-    svg.appendChild(axisText(svgNS, fmtHourLabel(buckets[i].hour), margin.left + i * bw + bw / 2, margin.top + plotH + 16, 'middle'));
+    const x = margin.left + i * bw + bw / 2;
+    if (x - labelW / 2 < 0 || x + labelW / 2 > width) continue;
+    svg.appendChild(axisText2(svgNS, fmtDayLabel(buckets[i].hour), fmtClockLabel(buckets[i].hour), x, margin.top + plotH + 14));
   }
 
   const legend = document.createElement('div');
@@ -199,6 +214,24 @@ function axisText(svgNS, content, x, y, anchor) {
   t.setAttribute('text-anchor', anchor);
   t.setAttribute('class', 'axis');
   t.textContent = content;
+  return t;
+}
+
+function axisText2(svgNS, line1, line2, x, y) {
+  const t = document.createElementNS(svgNS, 'text');
+  t.setAttribute('x', x);
+  t.setAttribute('y', y);
+  t.setAttribute('text-anchor', 'middle');
+  t.setAttribute('class', 'axis');
+  const ts1 = document.createElementNS(svgNS, 'tspan');
+  ts1.setAttribute('x', x);
+  ts1.textContent = line1;
+  const ts2 = document.createElementNS(svgNS, 'tspan');
+  ts2.setAttribute('x', x);
+  ts2.setAttribute('dy', '12');
+  ts2.textContent = line2;
+  t.appendChild(ts1);
+  t.appendChild(ts2);
   return t;
 }
 
@@ -234,6 +267,12 @@ async function bootstrap() {
 
 document.getElementById('chart-user').addEventListener('change', refreshChart);
 document.getElementById('chart-hours').addEventListener('change', refreshChart);
+
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { refreshChart().catch(() => {}); }, 200);
+});
 
 setInterval(() => { refreshOverview().catch(() => {}); refreshConnections().catch(() => {}); }, 15000);
 
