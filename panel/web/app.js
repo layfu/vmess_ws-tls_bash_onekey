@@ -43,6 +43,18 @@ function protoBadge(p) {
   return `<span class="badge ${p}">${label}</span>`;
 }
 
+function statusBadge(s) {
+  if (!s) return '<span class="badge">—</span>';
+  const map = {
+    direct: { cls: 'ok', label: '直连' },
+    warp: { cls: 'warp', label: 'WARP' },
+    blocked: { cls: 'blocked', label: '封禁' },
+    rejected: { cls: 'blocked', label: '拒绝' },
+  };
+  const m = map[s] || { cls: '', label: escapeHtml(s) };
+  return `<span class="badge ${m.cls}">${m.label}</span>`;
+}
+
 async function refreshOverview() {
   const data = await fetchJSON('api/overview');
   document.getElementById('total-up').textContent = fmtBytes(data.total_up);
@@ -122,6 +134,7 @@ async function refreshConnections() {
       `<td class="mono">${fmtTime(c.ts)}</td>` +
       `<td>${protoBadge(c.protocol)}</td>` +
       `<td>${escapeHtml(c.username) || '—'}</td>` +
+      `<td>${statusBadge(c.status)}</td>` +
       `<td class="mono">${escapeHtml(c.source) || '—'}</td>` +
       `<td class="mono">${escapeHtml(c.target)}</td>`;
     tbody.appendChild(tr);

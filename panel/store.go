@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS connections (
   protocol TEXT NOT NULL,
   username TEXT NOT NULL,
   source TEXT NOT NULL,
-  target TEXT NOT NULL
+  target TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_connections_ts ON connections(ts);
 `
@@ -64,20 +65,56 @@ func openStore(path string) (*store, error) {
 		db.Close()
 		return nil, err
 	}
-	if err := migrateTotals(db); err != nil {
+	if err := migrate(db); err != nil {
 		db.Close()
 		return nil, err
 	}
 	return &store{db: db}, nil
 }
 
-// migrateTotals adds columns introduced after the initial release without
-// disturbing existing rows. SQLite lacks "ADD COLUMN IF NOT EXISTS", so we
-// inspect the table columns first.
-func migrateTotals(db *sql.DB) error {
-	rows, err := db.Query(`PRAGMA table_info(totals)`)
+// migrate adds columns introduced after the initial release without disturbing
+// existing rows. SQLite lacks "ADD COLUMN IF NOT EXISTS", so we inspect the
+// table columns first.
+func migrate(db *sql.DB) error {
+	migrations := []struct {
+		table string
+		add   []struct{ name, ddl string }
+	}{
+		{
+			table: "totals",
+			add: []struct{ name, ddl string }{
+				{"reset_at", `ALTER TABLE totals ADD COLUMN reset_at INTEGER NOT NULL DEFAULT 0`},
+				{"reset_uplink", `ALTER TABLE totals ADD COLUMN reset_uplink INTEGER NOT NULL DEFAULT 0`},
+				{"reset_downlink", `ALTER TABLE totals ADD COLUMN reset_downlink INTEGER NOT NULL DEFAULT 0`},
+			},
+		},
+		{
+			table: "connections",
+			add: []struct{ name, ddl string }{
+				{"status", `ALTER TABLE connections ADD COLUMN status TEXT NOT NULL DEFAULT ''`},
+			},
+		},
+	}
+	for _, m := range migrations {
+		have, err := tableColumns(db, m.table)
+		if err != nil {
+			return err
+		}
+		for _, c := range m.add {
+			if !have[c.name] {
+				if _, err := db.Exec(c.ddl); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func tableColumns(db *sql.DB, table string) (map[string]bool, error) {
+	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer rows.Close()
 	have := map[string]bool{}
@@ -87,26 +124,11 @@ func migrateTotals(db *sql.DB) error {
 		var notnull, pk int
 		var dflt any
 		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
-			return err
+			return nil, err
 		}
 		have[name] = true
 	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	add := []struct{ name, ddl string }{
-		{"reset_at", `ALTER TABLE totals ADD COLUMN reset_at INTEGER NOT NULL DEFAULT 0`},
-		{"reset_uplink", `ALTER TABLE totals ADD COLUMN reset_uplink INTEGER NOT NULL DEFAULT 0`},
-		{"reset_downlink", `ALTER TABLE totals ADD COLUMN reset_downlink INTEGER NOT NULL DEFAULT 0`},
-	}
-	for _, c := range add {
-		if !have[c.name] {
-			if _, err := db.Exec(c.ddl); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return have, rows.Err()
 }
 
 func (s *store) Close() error { return s.db.Close() }
@@ -161,10 +183,10 @@ func (s *store) addTraffic(protocol, username string, uplink, downlink int64, no
 	return err
 }
 
-func (s *store) addConnection(protocol, username, source, target string, ts time.Time) error {
+func (s *store) addConnection(protocol, username, source, target, status string, ts time.Time) error {
 	_, err := s.db.Exec(
-		`INSERT INTO connections (ts, protocol, username, source, target) VALUES (?, ?, ?, ?, ?)`,
-		ts.Unix(), protocol, username, source, target,
+		`INSERT INTO connections (ts, protocol, username, source, target, status) VALUES (?, ?, ?, ?, ?, ?)`,
+		ts.Unix(), protocol, username, source, target, status,
 	)
 	return err
 }
@@ -278,10 +300,11 @@ type connectionRow struct {
 	Username string
 	Source   string
 	Target   string
+	Status   string
 }
 
 func (s *store) connections(limit int, protocol, username string) ([]connectionRow, error) {
-	q := `SELECT ts, protocol, username, source, target FROM connections`
+	q := `SELECT ts, protocol, username, source, target, status FROM connections`
 	var args []any
 	var conds []string
 	if protocol != "" {
@@ -306,7 +329,7 @@ func (s *store) connections(limit int, protocol, username string) ([]connectionR
 	var out []connectionRow
 	for rows.Next() {
 		var r connectionRow
-		if err := rows.Scan(&r.TS, &r.Protocol, &r.Username, &r.Source, &r.Target); err != nil {
+		if err := rows.Scan(&r.TS, &r.Protocol, &r.Username, &r.Source, &r.Target, &r.Status); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

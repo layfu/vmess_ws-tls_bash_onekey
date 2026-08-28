@@ -1,4 +1,7 @@
 ## 2026-08-28
+* 面板「最近连接」新增「状态」列：直连 / WARP / 封禁。VMess 解析 v2ray 访问日志 `[出站标签]`；AnyTLS 解析 sing-box 出站日志（`outbound/…: outbound/blocked connection to …`）并按日志连接 ID 与入站行关联，无需改 sing-box
+
+## 2026-08-28
 * 修复「查看 AnyTLS 实时日志」看不到内容：安装面板后 sing-box 日志已写入文件 `/var/log/sing-box/sing-box.log`，查看器由 `journalctl` 改为优先 `tail -f` 该文件（无文件时回退 journalctl）
 
 ## 2026-08-28

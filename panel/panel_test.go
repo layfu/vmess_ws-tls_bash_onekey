@@ -57,20 +57,26 @@ func TestParseQueryStatsResponse(t *testing.T) {
 }
 
 func TestParseV2rayLine(t *testing.T) {
-	line := "2026/08/27 12:00:00 1.2.3.4:54321 accepted tcp:example.com:443 email: user1"
-	p, u, src, dst, ts, ok := parseV2rayLine(line)
+	line := "2026/08/27 12:00:00 1.2.3.4:54321 accepted tcp:example.com:443 [direct] email: user1"
+	p, u, src, dst, status, ts, ok := parseV2rayLine(line)
 	if !ok {
 		t.Fatalf("expected ok")
 	}
-	if p != "vmess" || u != "user1" || src != "1.2.3.4:54321" || dst != "example.com:443" {
-		t.Errorf("got %q %q %q %q", p, u, src, dst)
+	if p != "vmess" || u != "user1" || src != "1.2.3.4:54321" || dst != "example.com:443" || status != "direct" {
+		t.Errorf("got %q %q %q %q %q", p, u, src, dst, status)
 	}
 	if ts <= 0 {
 		t.Errorf("expected positive timestamp, got %d", ts)
 	}
 
+	blocked := "2026/08/27 12:00:00 1.2.3.4:54321 accepted tcp:example.com:443 [blocked] email: user1"
+	_, _, _, _, status, _, ok = parseV2rayLine(blocked)
+	if !ok || status != "blocked" {
+		t.Errorf("expected blocked status, got %q %v", status, ok)
+	}
+
 	rej := "2026/08/27 12:00:00 5.6.7.8:9999 rejected  email: user2"
-	if _, _, _, _, _, ok := parseV2rayLine(rej); ok {
+	if _, _, _, _, _, _, ok := parseV2rayLine(rej); ok {
 		t.Errorf("rejected line should not be accepted")
 	}
 }
@@ -86,27 +92,51 @@ func TestParseNginxWsLine(t *testing.T) {
 	}
 }
 
-func TestParseSingboxLine(t *testing.T) {
+func TestParseSingboxInbound(t *testing.T) {
 	withUser := "+0800 2026-08-27 12:00:00 INFO [123 12s] inbound/anytls[anytls-in]: [user1] inbound connection from 1.2.3.4:54321 to example.com:443"
-	p, u, src, dst, ok := parseSingboxLine(withUser)
+	id, u, src, dst, ok := parseSingboxInbound(withUser)
 	if !ok {
 		t.Fatalf("expected ok")
 	}
-	if p != "anytls" || u != "user1" || src != "1.2.3.4:54321" || dst != "example.com:443" {
-		t.Errorf("got %q %q %q %q", p, u, src, dst)
+	if id != "123" || u != "user1" || src != "1.2.3.4:54321" || dst != "example.com:443" {
+		t.Errorf("got %q %q %q %q", id, u, src, dst)
 	}
 
 	// 官方 sing-box 不记录来源（只有目标）
-	noSource := "INFO inbound/anytls[anytls-in]: [user1] inbound connection to example.com:443"
-	p, u, src, dst, ok = parseSingboxLine(noSource)
-	if !ok || p != "anytls" || u != "user1" || src != "" || dst != "example.com:443" {
-		t.Errorf("got %q %q %q %q %v", p, u, src, dst, ok)
+	noSource := "INFO [42 3s] inbound/anytls[anytls-in]: [user1] inbound connection to example.com:443"
+	_, u, src, dst, ok = parseSingboxInbound(noSource)
+	if !ok || u != "user1" || src != "" || dst != "example.com:443" {
+		t.Errorf("got %q %q %q %v", u, src, dst, ok)
 	}
 
-	noUser := "INFO inbound/anytls[anytls-in]: inbound connection from 5.6.7.8:9999 to 1.2.3.4:443"
-	_, u2, src2, dst2, ok := parseSingboxLine(noUser)
+	noUser := "INFO [43 3s] inbound/anytls[anytls-in]: inbound connection from 5.6.7.8:9999 to 1.2.3.4:443"
+	_, u2, src2, dst2, ok := parseSingboxInbound(noUser)
 	if !ok || u2 != "" || src2 != "5.6.7.8:9999" || dst2 != "1.2.3.4:443" {
 		t.Errorf("got %q %q %q %v", u2, src2, dst2, ok)
+	}
+}
+
+func TestParseSingboxOutbound(t *testing.T) {
+	direct := "+0800 2026-08-27 12:00:00 INFO [123 12s] outbound/direct[direct]: outbound connection to example.com:443"
+	id, status, ok := parseSingboxOutbound(direct)
+	if !ok || id != "123" || status != "direct" {
+		t.Errorf("got %q %q %v", id, status, ok)
+	}
+
+	warp := "+0800 2026-08-27 12:00:00 INFO [123 12s] outbound/socks[warp]: outbound connection to video-s.twimg.com:443"
+	id, status, ok = parseSingboxOutbound(warp)
+	if !ok || id != "123" || status != "warp" {
+		t.Errorf("got %q %q %v", id, status, ok)
+	}
+
+	blocked := "+0800 2026-08-27 12:00:00 INFO [123 12s] outbound/block[block]: blocked connection to example.com:443"
+	id, status, ok = parseSingboxOutbound(blocked)
+	if !ok || id != "123" || status != "blocked" {
+		t.Errorf("got %q %q %v", id, status, ok)
+	}
+
+	if _, _, ok := parseSingboxOutbound("INFO inbound/anytls[anytls-in]: [user1] inbound connection to example.com:443"); ok {
+		t.Errorf("inbound line should not parse as outbound")
 	}
 }
 
@@ -120,7 +150,7 @@ func TestCorrelator(t *testing.T) {
 	c := newCorrelator(st)
 	now := time.Now().Unix()
 
-	_ = st.addConnection("vmess", "user1", "127.0.0.1:54321", "example.com:443", time.Unix(now, 0))
+	_ = st.addConnection("vmess", "user1", "127.0.0.1:54321", "example.com:443", "direct", time.Unix(now, 0))
 	c.addVmess(now, "user1", "example.com:443", "127.0.0.1:54321")
 	c.addWs(now+1, "9.9.9.9")
 
@@ -130,6 +160,42 @@ func TestCorrelator(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].Source != "9.9.9.9" {
 		t.Errorf("expected source 9.9.9.9, got %+v", rows)
+	}
+}
+
+func TestSingboxMatcher(t *testing.T) {
+	st, err := openStore(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	m := newSingboxMatcher(st)
+
+	// inbound + outbound (warp)
+	m.handle("+0800 2026-08-27 12:00:00 INFO [1 5ms] inbound/anytls[anytls-in]: [alice] inbound connection from 1.2.3.4:1000 to video-s.twimg.com:443")
+	m.handle("+0800 2026-08-27 12:00:00 INFO [1 12ms] outbound/socks[warp]: outbound connection to video-s.twimg.com:443")
+
+	// inbound + outbound (blocked)
+	m.handle("+0800 2026-08-27 12:00:00 INFO [2 5ms] inbound/anytls[anytls-in]: [bob] inbound connection from 5.6.7.8:2000 to ad.example.com:443")
+	m.handle("+0800 2026-08-27 12:00:00 INFO [2 12ms] outbound/block[block]: blocked connection to ad.example.com:443")
+
+	rows, err := st.connections(10, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 connections, got %d", len(rows))
+	}
+	byUser := map[string]connectionRow{}
+	for _, r := range rows {
+		byUser[r.Username] = r
+	}
+	if r := byUser["alice"]; r.Status != "warp" || r.Source != "1.2.3.4:1000" {
+		t.Errorf("alice = %+v", r)
+	}
+	if r := byUser["bob"]; r.Status != "blocked" || r.Source != "5.6.7.8:2000" {
+		t.Errorf("bob = %+v", r)
 	}
 }
 
