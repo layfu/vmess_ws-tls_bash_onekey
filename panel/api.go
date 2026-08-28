@@ -108,7 +108,7 @@ type connInfo struct {
 func (a *api) connections(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	if limit <= 0 {
-		limit = 200
+		limit = 50
 	}
 	if limit > 1000 {
 		limit = 1000

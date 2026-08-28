@@ -114,18 +114,21 @@ function buildConnUserOptions() {
   sel.value = options.includes(prev) ? prev : 'all';
 }
 
+const CONN_PAGE = 50;
+const CONN_MAX = 1000;
+let connLimit = CONN_PAGE;
+
 async function refreshConnections() {
   const proto = document.getElementById('conn-protocol').value;
   const user = document.getElementById('conn-user').value;
-  const qs = [];
+  const qs = [`limit=${connLimit}`];
   if (proto !== 'all') qs.push('protocol=' + encodeURIComponent(proto));
   if (user !== 'all') {
     const i = user.indexOf(':');
     qs.push('protocol=' + encodeURIComponent(user.slice(0, i)));
     qs.push('username=' + encodeURIComponent(user.slice(i + 1)));
   }
-  const url = qs.length ? 'api/connections?' + qs.join('&') : 'api/connections';
-  const data = await fetchJSON(url);
+  const data = await fetchJSON('api/connections?' + qs.join('&'));
   const tbody = document.querySelector('#conn-table tbody');
   tbody.innerHTML = '';
   for (const c of data.connections) {
@@ -139,6 +142,13 @@ async function refreshConnections() {
       `<td class="mono">${escapeHtml(c.target)}</td>`;
     tbody.appendChild(tr);
   }
+  updateConnMore(data.connections.length);
+}
+
+function updateConnMore(count) {
+  const btn = document.getElementById('conn-more');
+  btn.textContent = `加载更多（已显示 ${count} 条）`;
+  btn.style.display = (connLimit < CONN_MAX && count >= connLimit) ? '' : 'none';
 }
 
 function buildUserSelect(users) {
@@ -540,9 +550,15 @@ document.getElementById('chart-user').addEventListener('change', refreshChart);
 document.getElementById('chart-hours').addEventListener('change', refreshChart);
 document.getElementById('conn-protocol').addEventListener('change', () => {
   buildConnUserOptions();
+  connLimit = CONN_PAGE;
   refreshConnections().catch(() => {});
 });
 document.getElementById('conn-user').addEventListener('change', () => {
+  connLimit = CONN_PAGE;
+  refreshConnections().catch(() => {});
+});
+document.getElementById('conn-more').addEventListener('click', () => {
+  connLimit = Math.min(connLimit + CONN_PAGE, CONN_MAX);
   refreshConnections().catch(() => {});
 });
 document.getElementById('reset-all').addEventListener('click', () => {

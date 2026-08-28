@@ -54,6 +54,31 @@ section h2 .hint {
   overflow-x: auto;
 }
 
+.table-wrap.conn-scroll {
+  max-height: 420px;
+  overflow-y: auto;
+}
+.table-wrap.conn-scroll thead th {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  z-index: 1;
+}
+
+.btn-more {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px;
+  background: var(--panel);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.btn-more:hover { color: var(--text); }
+
 table { width: 100%; border-collapse: collapse; }
 th, td { padding: 10px 14px; text-align: left; white-space: nowrap; }
 th { color: var(--muted); font-weight: 500; font-size: 12px; border-bottom: 1px solid var(--border); }
