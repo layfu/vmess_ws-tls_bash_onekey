@@ -39,6 +39,7 @@ func main() {
 	startLogTailers(st, cfg)
 
 	st.prune(24*time.Hour, 20000)
+	st.pruneHourly(time.Duration(cfg.RetentionDays) * 24 * time.Hour)
 	go func() {
 		t := time.NewTicker(time.Hour)
 		defer t.Stop()
@@ -48,6 +49,7 @@ func main() {
 				return
 			case <-t.C:
 				st.prune(24*time.Hour, 20000)
+				st.pruneHourly(time.Duration(cfg.RetentionDays) * 24 * time.Hour)
 			}
 		}
 	}()
@@ -58,6 +60,8 @@ func main() {
 	mux.HandleFunc("/api/overview", a.overview)
 	mux.HandleFunc("/api/traffic", a.traffic)
 	mux.HandleFunc("/api/connections", a.connections)
+	mux.HandleFunc("/api/history", a.history)
+	mux.HandleFunc("/api/reset", a.reset)
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, map[string]string{"status": "ok"})
 	})

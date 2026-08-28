@@ -19,6 +19,7 @@ type Config struct {
 	DBPath          string         `json:"db_path"`
 	PollIntervalSec int            `json:"poll_interval_sec"`
 	OnlineWindowSec int            `json:"online_window_sec"`
+	RetentionDays   int            `json:"retention_days"`
 	V2Ray           ProtocolConfig `json:"v2ray"`
 	SingBox         ProtocolConfig `json:"singbox"`
 }
@@ -29,6 +30,7 @@ func defaultConfig() *Config {
 		DBPath:          "/var/lib/panel/panel.db",
 		PollIntervalSec: 15,
 		OnlineWindowSec: 90,
+		RetentionDays:   1095,
 		V2Ray: ProtocolConfig{
 			Enabled:     false,
 			APIAddr:     "127.0.0.1:50085",
@@ -62,6 +64,9 @@ func loadConfig(path string) (*Config, error) {
 	}
 	if cfg.OnlineWindowSec <= 0 {
 		cfg.OnlineWindowSec = 90
+	}
+	if cfg.RetentionDays <= 0 {
+		cfg.RetentionDays = 1095
 	}
 	if cfg.Listen == "" {
 		cfg.Listen = "127.0.0.1:2052"

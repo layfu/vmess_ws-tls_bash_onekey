@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 )
@@ -14,13 +15,17 @@ type api struct {
 }
 
 type userInfo struct {
-	Protocol string `json:"protocol"`
-	Username string `json:"username"`
-	Uplink   int64  `json:"uplink"`
-	Downlink int64  `json:"downlink"`
-	Total    int64  `json:"total"`
-	LastSeen int64  `json:"last_seen"`
-	Online   bool   `json:"online"`
+	Protocol      string `json:"protocol"`
+	Username      string `json:"username"`
+	Uplink        int64  `json:"uplink"`
+	Downlink      int64  `json:"downlink"`
+	Total         int64  `json:"total"`
+	LifetimeUp    int64  `json:"lifetime_up"`
+	LifetimeDown  int64  `json:"lifetime_down"`
+	LifetimeTotal int64  `json:"lifetime_total"`
+	LastSeen      int64  `json:"last_seen"`
+	ResetAt       int64  `json:"reset_at"`
+	Online        bool   `json:"online"`
 }
 
 func (a *api) overview(w http.ResponseWriter, r *http.Request) {
@@ -33,17 +38,23 @@ func (a *api) overview(w http.ResponseWriter, r *http.Request) {
 	users := make([]userInfo, 0, len(totals))
 	var totalUp, totalDown int64
 	for _, t := range totals {
+		periodUp := t.Uplink - t.ResetUplink
+		periodDown := t.Downlink - t.ResetDownlink
 		users = append(users, userInfo{
-			Protocol: t.Protocol,
-			Username: t.Username,
-			Uplink:   t.Uplink,
-			Downlink: t.Downlink,
-			Total:    t.Uplink + t.Downlink,
-			LastSeen: t.LastSeen,
-			Online:   t.LastSeen > 0 && now-t.LastSeen <= a.onlineWin,
+			Protocol:      t.Protocol,
+			Username:      t.Username,
+			Uplink:        periodUp,
+			Downlink:      periodDown,
+			Total:         periodUp + periodDown,
+			LifetimeUp:    t.Uplink,
+			LifetimeDown:  t.Downlink,
+			LifetimeTotal: t.Uplink + t.Downlink,
+			LastSeen:      t.LastSeen,
+			ResetAt:       t.ResetAt,
+			Online:        t.LastSeen > 0 && now-t.LastSeen <= a.onlineWin,
 		})
-		totalUp += t.Uplink
-		totalDown += t.Downlink
+		totalUp += periodUp
+		totalDown += periodDown
 	}
 	writeJSON(w, map[string]any{
 		"users":      users,
@@ -113,6 +124,119 @@ func (a *api) connections(w http.ResponseWriter, r *http.Request) {
 		out = append(out, connInfo{TS: r.TS, Protocol: r.Protocol, Username: r.Username, Source: r.Source, Target: r.Target})
 	}
 	writeJSON(w, map[string]any{"connections": out})
+}
+
+type historyDay struct {
+	Day      int64 `json:"day"`
+	Uplink   int64 `json:"uplink"`
+	Downlink int64 `json:"downlink"`
+}
+
+type historyUser struct {
+	Protocol string `json:"protocol"`
+	Username string `json:"username"`
+	Uplink   int64  `json:"uplink"`
+	Downlink int64  `json:"downlink"`
+}
+
+func (a *api) history(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	start, _ := strconv.ParseInt(q.Get("start"), 10, 64)
+	end, _ := strconv.ParseInt(q.Get("end"), 10, 64)
+	now := time.Now().Unix()
+	if end <= 0 || end > now {
+		end = now
+	}
+	if start <= 0 {
+		start = end - 30*24*3600
+	}
+	if start >= end {
+		writeJSON(w, map[string]any{
+			"total_up":   int64(0),
+			"total_down": int64(0),
+			"days":       []historyDay{},
+			"users":      []historyUser{},
+		})
+		return
+	}
+	protocol := q.Get("protocol")
+	username := q.Get("username")
+	rows, err := a.store.hourlyRange(start, end, protocol, username)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	var totalUp, totalDown int64
+	dayMap := map[int64]*historyDay{}
+	userMap := map[string]*historyUser{}
+	for _, r := range rows {
+		totalUp += r.Uplink
+		totalDown += r.Downlink
+
+		day := localMidnight(r.Hour)
+		d := dayMap[day]
+		if d == nil {
+			d = &historyDay{Day: day}
+			dayMap[day] = d
+		}
+		d.Uplink += r.Uplink
+		d.Downlink += r.Downlink
+
+		key := r.Protocol + ":" + r.Username
+		u := userMap[key]
+		if u == nil {
+			u = &historyUser{Protocol: r.Protocol, Username: r.Username}
+			userMap[key] = u
+		}
+		u.Uplink += r.Uplink
+		u.Downlink += r.Downlink
+	}
+
+	days := make([]historyDay, 0, len(dayMap))
+	for _, d := range dayMap {
+		days = append(days, *d)
+	}
+	sort.Slice(days, func(i, j int) bool { return days[i].Day < days[j].Day })
+
+	users := make([]historyUser, 0, len(userMap))
+	for _, u := range userMap {
+		users = append(users, *u)
+	}
+	sort.Slice(users, func(i, j int) bool {
+		if users[i].Protocol != users[j].Protocol {
+			return users[i].Protocol < users[j].Protocol
+		}
+		return users[i].Username < users[j].Username
+	})
+
+	writeJSON(w, map[string]any{
+		"total_up":   totalUp,
+		"total_down": totalDown,
+		"days":       days,
+		"users":      users,
+	})
+}
+
+// localMidnight converts an hourly bucket (Unix seconds, UTC-truncated) into
+// the local calendar day's midnight Unix timestamp for day-based grouping.
+func localMidnight(hour int64) int64 {
+	t := time.Unix(hour, 0).Local()
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location()).Unix()
+}
+
+func (a *api) reset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, map[string]string{"error": "method not allowed"})
+		return
+	}
+	now := time.Now().Unix()
+	if err := a.store.resetAllTraffic(now); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, map[string]any{"reset_at": now})
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

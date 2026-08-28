@@ -41,6 +41,13 @@ main { max-width: 1080px; margin: 0 auto; padding: 20px 24px 40px; }
 section { margin-bottom: 28px; }
 section h2 { font-size: 15px; margin: 0 0 12px; color: var(--text); }
 
+section h2 .hint {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+  margin-left: 8px;
+}
+
 .table-wrap {
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -79,6 +86,46 @@ select {
   border-radius: 6px;
   padding: 4px 8px;
   font-size: 13px;
+}
+
+input[type="date"] {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 6px;
+  font-size: 13px;
+}
+
+.btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 13px;
+  margin-left: 12px;
+  cursor: pointer;
+}
+.btn:hover { opacity: 0.88; }
+
+.hist-summary {
+  display: flex;
+  gap: 28px;
+  margin-bottom: 12px;
+}
+.hist-summary .stat { display: flex; flex-direction: column; align-items: flex-start; }
+.hist-summary .stat .label { color: var(--muted); font-size: 12px; }
+.hist-summary .stat .value { font-size: 18px; font-weight: 600; margin-top: 2px; }
+
+#hist-chart {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin-bottom: 12px;
+  min-height: 60px;
 }
 
 footer {

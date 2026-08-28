@@ -31,7 +31,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.8.7"
+shell_version="1.6.8.8"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -728,6 +728,7 @@ panel_config_gen() {
   "db_path": "${panel_db}",
   "poll_interval_sec": 15,
   "online_window_sec": 90,
+  "retention_days": 1095,
   "v2ray": {
     "enabled": ${v2ray_enabled},
     "api_addr": "127.0.0.1:${panel_v2ray_api_port}",

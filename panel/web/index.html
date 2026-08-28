@@ -18,7 +18,9 @@
 
 <main>
   <section>
-    <h2>用户流量</h2>
+    <h2>用户流量 <span class="hint">上行/下行/总量为当前周期，累计为终身总量</span>
+      <button id="reset-all" class="btn">全部重置</button>
+    </h2>
     <div class="table-wrap">
       <table id="users-table">
         <thead>
@@ -28,6 +30,8 @@
             <th>上行</th>
             <th>下行</th>
             <th>总量</th>
+            <th>累计</th>
+            <th>周期起始</th>
             <th>状态</th>
             <th>最近活跃</th>
           </tr>
@@ -67,6 +71,49 @@
             <th>用户</th>
             <th>来源</th>
             <th>目标</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>历史统计
+      <select id="hist-protocol" style="margin-left:12px;">
+        <option value="all">全部协议</option>
+      </select>
+      <select id="hist-user" style="margin-left:8px;">
+        <option value="all">全部用户</option>
+      </select>
+      <select id="hist-range" style="margin-left:8px;">
+        <option value="7">近 7 天</option>
+        <option value="30">近 30 天</option>
+        <option value="90">近 90 天</option>
+        <option value="365">近 1 年</option>
+        <option value="1095">近 3 年</option>
+        <option value="custom">自定义</option>
+      </select>
+      <span id="hist-custom" style="display:none;margin-left:8px;">
+        <input type="date" id="hist-from">
+        <input type="date" id="hist-to">
+      </span>
+    </h2>
+    <div class="hist-summary">
+      <div class="stat"><span class="label">上行</span><span class="value" id="hist-up">—</span></div>
+      <div class="stat"><span class="label">下行</span><span class="value" id="hist-down">—</span></div>
+      <div class="stat"><span class="label">总量</span><span class="value" id="hist-total">—</span></div>
+    </div>
+    <div id="hist-chart"></div>
+    <div class="table-wrap">
+      <table id="hist-table">
+        <thead>
+          <tr>
+            <th>协议</th>
+            <th>用户</th>
+            <th>上行</th>
+            <th>下行</th>
+            <th>总量</th>
           </tr>
         </thead>
         <tbody></tbody>

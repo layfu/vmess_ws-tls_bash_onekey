@@ -24,6 +24,9 @@ CREATE TABLE IF NOT EXISTS totals (
   uplink INTEGER NOT NULL DEFAULT 0,
   downlink INTEGER NOT NULL DEFAULT 0,
   last_seen INTEGER NOT NULL DEFAULT 0,
+  reset_at INTEGER NOT NULL DEFAULT 0,
+  reset_uplink INTEGER NOT NULL DEFAULT 0,
+  reset_downlink INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (protocol, username)
 );
 CREATE TABLE IF NOT EXISTS hourly (
@@ -61,7 +64,49 @@ func openStore(path string) (*store, error) {
 		db.Close()
 		return nil, err
 	}
+	if err := migrateTotals(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return &store{db: db}, nil
+}
+
+// migrateTotals adds columns introduced after the initial release without
+// disturbing existing rows. SQLite lacks "ADD COLUMN IF NOT EXISTS", so we
+// inspect the table columns first.
+func migrateTotals(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA table_info(totals)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	have := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return err
+		}
+		have[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	add := []struct{ name, ddl string }{
+		{"reset_at", `ALTER TABLE totals ADD COLUMN reset_at INTEGER NOT NULL DEFAULT 0`},
+		{"reset_uplink", `ALTER TABLE totals ADD COLUMN reset_uplink INTEGER NOT NULL DEFAULT 0`},
+		{"reset_downlink", `ALTER TABLE totals ADD COLUMN reset_downlink INTEGER NOT NULL DEFAULT 0`},
+	}
+	for _, c := range add {
+		if !have[c.name] {
+			if _, err := db.Exec(c.ddl); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (s *store) Close() error { return s.db.Close() }
@@ -130,15 +175,18 @@ func (s *store) updateConnectionSource(oldSource, newSource string) error {
 }
 
 type totalRow struct {
-	Protocol string
-	Username string
-	Uplink   int64
-	Downlink int64
-	LastSeen int64
+	Protocol      string
+	Username      string
+	Uplink        int64
+	Downlink      int64
+	LastSeen      int64
+	ResetAt       int64
+	ResetUplink   int64
+	ResetDownlink int64
 }
 
 func (s *store) totals() ([]totalRow, error) {
-	rows, err := s.db.Query(`SELECT protocol, username, uplink, downlink, last_seen FROM totals ORDER BY protocol, username`)
+	rows, err := s.db.Query(`SELECT protocol, username, uplink, downlink, last_seen, reset_at, reset_uplink, reset_downlink FROM totals ORDER BY protocol, username`)
 	if err != nil {
 		return nil, err
 	}
@@ -146,12 +194,20 @@ func (s *store) totals() ([]totalRow, error) {
 	var out []totalRow
 	for rows.Next() {
 		var r totalRow
-		if err := rows.Scan(&r.Protocol, &r.Username, &r.Uplink, &r.Downlink, &r.LastSeen); err != nil {
+		if err := rows.Scan(&r.Protocol, &r.Username, &r.Uplink, &r.Downlink, &r.LastSeen, &r.ResetAt, &r.ResetUplink, &r.ResetDownlink); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// resetAllTraffic records a new "period start" marker for every user. It only
+// snapshots the current cumulative counters into reset_* columns; the lifetime
+// totals and hourly history are left untouched so historical data is never lost.
+func (s *store) resetAllTraffic(ts int64) error {
+	_, err := s.db.Exec(`UPDATE totals SET reset_at = ?, reset_uplink = uplink, reset_downlink = downlink`, ts)
+	return err
 }
 
 type hourlyRow struct {
@@ -173,6 +229,42 @@ func (s *store) hourly(protocol, username string, since time.Time) ([]hourlyRow,
 	for rows.Next() {
 		var r hourlyRow
 		if err := rows.Scan(&r.Hour, &r.Uplink, &r.Downlink); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+type hourlyRangeRow struct {
+	Hour     int64
+	Protocol string
+	Username string
+	Uplink   int64
+	Downlink int64
+}
+
+func (s *store) hourlyRange(start, end int64, protocol, username string) ([]hourlyRangeRow, error) {
+	q := `SELECT hour, protocol, username, uplink, downlink FROM hourly WHERE hour >= ? AND hour < ?`
+	args := []any{start, end}
+	if protocol != "" {
+		q += ` AND protocol = ?`
+		args = append(args, protocol)
+	}
+	if username != "" {
+		q += ` AND username = ?`
+		args = append(args, username)
+	}
+	q += ` ORDER BY hour`
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []hourlyRangeRow
+	for rows.Next() {
+		var r hourlyRangeRow
+		if err := rows.Scan(&r.Hour, &r.Protocol, &r.Username, &r.Uplink, &r.Downlink); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -226,9 +318,15 @@ func (s *store) prune(maxAge time.Duration, maxRows int) {
 	if maxAge > 0 {
 		cutoff := time.Now().Add(-maxAge).Unix()
 		_, _ = s.db.Exec(`DELETE FROM connections WHERE ts < ?`, cutoff)
-		_, _ = s.db.Exec(`DELETE FROM hourly WHERE hour < ?`, cutoff)
 	}
 	if maxRows > 0 {
 		_, _ = s.db.Exec(`DELETE FROM connections WHERE id NOT IN (SELECT id FROM connections ORDER BY id DESC LIMIT ?)`, maxRows)
+	}
+}
+
+func (s *store) pruneHourly(maxAge time.Duration) {
+	if maxAge > 0 {
+		cutoff := time.Now().Add(-maxAge).Unix()
+		_, _ = s.db.Exec(`DELETE FROM hourly WHERE hour < ?`, cutoff)
 	}
 }

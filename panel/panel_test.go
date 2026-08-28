@@ -132,3 +132,85 @@ func TestCorrelator(t *testing.T) {
 		t.Errorf("expected source 9.9.9.9, got %+v", rows)
 	}
 }
+
+func TestResetAllTraffic(t *testing.T) {
+	st, err := openStore(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	now := time.Now()
+	if err := st.addTraffic("vmess", "user1", 1000, 2000, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.addTraffic("vmess", "user1", 500, 700, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	ts := now.Add(2 * time.Hour).Unix()
+	if err := st.resetAllTraffic(ts); err != nil {
+		t.Fatal(err)
+	}
+
+	totals, err := st.totals()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(totals) != 1 {
+		t.Fatalf("expected 1 total, got %d", len(totals))
+	}
+	r := totals[0]
+	if r.Uplink != 1500 || r.Downlink != 2700 {
+		t.Errorf("lifetime totals must not change after reset: %+v", r)
+	}
+	if r.ResetUplink != 1500 || r.ResetDownlink != 2700 {
+		t.Errorf("reset snapshot wrong: %+v", r)
+	}
+	if r.ResetAt != ts {
+		t.Errorf("reset_at = %d, want %d", r.ResetAt, ts)
+	}
+	if r.Uplink-r.ResetUplink != 0 || r.Downlink-r.ResetDownlink != 0 {
+		t.Errorf("period traffic should be zero right after reset: %+v", r)
+	}
+}
+
+func TestHourlyRange(t *testing.T) {
+	st, err := openStore(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	base := time.Unix(1700000000, 0).Truncate(time.Hour)
+	if err := st.addTraffic("vmess", "alice", 100, 200, base); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.addTraffic("anytls", "bob", 300, 400, base.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := st.hourlyRange(base.Unix()-3600, base.Unix()+7200, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(rows))
+	}
+
+	rows, err = st.hourlyRange(base.Unix()-3600, base.Unix()+7200, "vmess", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Protocol != "vmess" || rows[0].Username != "alice" {
+		t.Errorf("protocol filter failed: %+v", rows)
+	}
+
+	rows, err = st.hourlyRange(base.Unix()-3600, base.Unix()+7200, "", "bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Protocol != "anytls" || rows[0].Username != "bob" {
+		t.Errorf("username filter failed: %+v", rows)
+	}
+}
