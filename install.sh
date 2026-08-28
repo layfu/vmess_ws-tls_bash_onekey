@@ -31,7 +31,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.8.8"
+shell_version="1.6.8.9"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -2815,7 +2815,11 @@ show_error_log() {
 
 show_singbox_log() {
     [[ -f ${singbox_conf} ]] || { echo -e "${Error} ${RedBG} AnyTLS 未安装，请先安装 ${Font}"; return 1; }
-    journalctl -u sing-box --output cat -f
+    if [[ -f "${singbox_log_file}" ]]; then
+        tail -f "${singbox_log_file}"
+    else
+        journalctl -u sing-box --output cat -f
+    fi
 }
 
 ssl_update_manuel() {
