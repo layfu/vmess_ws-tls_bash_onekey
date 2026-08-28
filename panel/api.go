@@ -115,7 +115,8 @@ func (a *api) connections(w http.ResponseWriter, r *http.Request) {
 	}
 	protocol := r.URL.Query().Get("protocol")
 	username := r.URL.Query().Get("username")
-	rows, err := a.store.connections(limit, protocol, username)
+	status := r.URL.Query().Get("status")
+	rows, err := a.store.connections(limit, protocol, username, status)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -125,12 +126,6 @@ func (a *api) connections(w http.ResponseWriter, r *http.Request) {
 		out = append(out, connInfo{TS: r.TS, Protocol: r.Protocol, Username: r.Username, Source: r.Source, Target: r.Target, Status: r.Status})
 	}
 	writeJSON(w, map[string]any{"connections": out})
-}
-
-type historyDay struct {
-	Day      int64 `json:"day"`
-	Uplink   int64 `json:"uplink"`
-	Downlink int64 `json:"downlink"`
 }
 
 type historyUser struct {
@@ -155,7 +150,6 @@ func (a *api) history(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{
 			"total_up":   int64(0),
 			"total_down": int64(0),
-			"days":       []historyDay{},
 			"users":      []historyUser{},
 		})
 		return
@@ -169,20 +163,10 @@ func (a *api) history(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var totalUp, totalDown int64
-	dayMap := map[int64]*historyDay{}
 	userMap := map[string]*historyUser{}
 	for _, r := range rows {
 		totalUp += r.Uplink
 		totalDown += r.Downlink
-
-		day := localMidnight(r.Hour)
-		d := dayMap[day]
-		if d == nil {
-			d = &historyDay{Day: day}
-			dayMap[day] = d
-		}
-		d.Uplink += r.Uplink
-		d.Downlink += r.Downlink
 
 		key := r.Protocol + ":" + r.Username
 		u := userMap[key]
@@ -193,12 +177,6 @@ func (a *api) history(w http.ResponseWriter, r *http.Request) {
 		u.Uplink += r.Uplink
 		u.Downlink += r.Downlink
 	}
-
-	days := make([]historyDay, 0, len(dayMap))
-	for _, d := range dayMap {
-		days = append(days, *d)
-	}
-	sort.Slice(days, func(i, j int) bool { return days[i].Day < days[j].Day })
 
 	users := make([]historyUser, 0, len(userMap))
 	for _, u := range userMap {
@@ -214,16 +192,8 @@ func (a *api) history(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
 		"total_up":   totalUp,
 		"total_down": totalDown,
-		"days":       days,
 		"users":      users,
 	})
-}
-
-// localMidnight converts an hourly bucket (Unix seconds, UTC-truncated) into
-// the local calendar day's midnight Unix timestamp for day-based grouping.
-func localMidnight(hour int64) int64 {
-	t := time.Unix(hour, 0).Local()
-	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location()).Unix()
 }
 
 func (a *api) reset(w http.ResponseWriter, r *http.Request) {

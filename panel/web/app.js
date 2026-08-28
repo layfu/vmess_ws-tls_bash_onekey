@@ -121,6 +121,7 @@ let connLimit = CONN_PAGE;
 async function refreshConnections() {
   const proto = document.getElementById('conn-protocol').value;
   const user = document.getElementById('conn-user').value;
+  const status = document.getElementById('conn-status').value;
   const qs = [`limit=${connLimit}`];
   if (proto !== 'all') qs.push('protocol=' + encodeURIComponent(proto));
   if (user !== 'all') {
@@ -128,6 +129,7 @@ async function refreshConnections() {
     qs.push('protocol=' + encodeURIComponent(user.slice(0, i)));
     qs.push('username=' + encodeURIComponent(user.slice(i + 1)));
   }
+  if (status !== 'all') qs.push('status=' + encodeURIComponent(status));
   const data = await fetchJSON('api/connections?' + qs.join('&'));
   const tbody = document.querySelector('#conn-table tbody');
   tbody.innerHTML = '';
@@ -213,7 +215,7 @@ function histRange() {
   return { start, end };
 }
 
-let lastHistDays = [];
+let lastHistUsers = [];
 
 async function refreshHistory() {
   const proto = document.getElementById('hist-protocol').value;
@@ -243,8 +245,8 @@ async function refreshHistory() {
       `<td class="mono">${fmtBytes(u.uplink + u.downlink)}</td>`;
     tbody.appendChild(tr);
   }
-  lastHistDays = data.days || [];
-  drawHistoryChart(lastHistDays);
+  lastHistUsers = data.users || [];
+  drawHistoryChart(lastHistUsers);
 }
 
 async function resetAll() {
@@ -254,48 +256,22 @@ async function resetAll() {
   await refreshOverview();
 }
 
-function fmtDateLabel(day) {
-  const d = new Date(day * 1000);
-  const p = (x) => String(x).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+function protoColor(p) {
+  if (p === 'vmess') return '#7c5cff';
+  if (p === 'anytls') return '#ff8c4f';
+  return '#4f8cff';
 }
 
-function histLabel(day, width) {
-  const d = new Date(day * 1000);
-  const p = (x) => String(x).padStart(2, '0');
-  if (width >= 28) return `${d.getFullYear()}-${p(d.getMonth() + 1)}`;
-  return `${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+function shortName(s) {
+  return s.length > 12 ? s.slice(0, 12) + '…' : s;
 }
 
-function niceWidth(spanDays, maxBuckets) {
-  const min = Math.ceil(spanDays / maxBuckets);
-  const candidates = [1, 7, 30, 90, 365];
-  for (const c of candidates) { if (c >= min) return c; }
-  return candidates[candidates.length - 1];
-}
-
-function bucketize(days, maxBuckets) {
-  const min = days[0].day;
-  const maxDay = days[days.length - 1].day;
-  const spanDays = Math.max(1, Math.ceil((maxDay - min) / 86400) + 1);
-  const width = niceWidth(spanDays, maxBuckets);
-  const buckets = [];
-  const idx = {};
-  for (let t = min; t <= maxDay; t += width * 86400) {
-    idx[t] = buckets.length;
-    buckets.push({ day: t, up: 0, down: 0 });
-  }
-  for (const d of days) {
-    const t = min + Math.floor((d.day - min) / (width * 86400)) * width * 86400;
-    if (idx[t] != null) { buckets[idx[t]].up += d.uplink; buckets[idx[t]].down += d.downlink; }
-  }
-  return { buckets, width };
-}
-
-function drawHistoryChart(days) {
+// drawHistoryChart renders a per-user comparison bar chart for the selected
+// range: x-axis is users, y-axis is traffic, stacked by protocol.
+function drawHistoryChart(users) {
   const el = document.getElementById('hist-chart');
   el.innerHTML = '';
-  if (!days.length) {
+  if (!users.length) {
     el.textContent = '该时间范围内暂无数据';
     el.style.color = 'var(--muted)';
     el.style.textAlign = 'center';
@@ -306,16 +282,25 @@ function drawHistoryChart(days) {
   el.style.textAlign = '';
   el.style.padding = '';
 
-  const { buckets, width } = bucketize(days, 90);
-  const max = Math.max(1, ...buckets.map((b) => b.up + b.down));
+  const byUser = new Map();
+  for (const u of users) {
+    const name = u.username || '(无用户)';
+    if (!byUser.has(name)) byUser.set(name, []);
+    byUser.get(name).push(u);
+  }
+  const names = [...byUser.keys()].sort();
 
   const svgNS = 'http://www.w3.org/2000/svg';
-  const w = Math.max(el.clientWidth - 16, 420);
-  const height = 220;
-  const margin = { top: 6, right: 6, bottom: 26, left: 56 };
-  const plotW = w - margin.left - margin.right;
+  const barW = 46;
+  const gap = 14;
+  const height = 260;
+  const margin = { top: 6, right: 12, bottom: 44, left: 56 };
+  const plotW = Math.max(names.length * (barW + gap) - gap, 1);
+  const w = Math.max(el.clientWidth - 16, margin.left + plotW + margin.right);
   const plotH = height - margin.top - margin.bottom;
-  const bw = plotW / buckets.length;
+
+  const max = Math.max(1, ...names.map((name) =>
+    byUser.get(name).reduce((s, u) => s + u.uplink + u.downlink, 0)));
 
   const svg = document.createElementNS(svgNS, 'svg');
   svg.setAttribute('width', w);
@@ -336,38 +321,31 @@ function drawHistoryChart(days) {
     svg.appendChild(axisText(svgNS, fmtBytes(val), margin.left - 6, y + 3, 'end'));
   }
 
-  for (let i = 0; i < buckets.length; i++) {
-    const b = buckets[i];
-    const total = b.up + b.down;
-    const h = (total / max) * plotH;
-    const x = margin.left + i * bw;
-    const y = margin.top + plotH - h;
-    const tip = `${fmtDateLabel(b.day)}  上行 ${fmtBytes(b.up)}  下行 ${fmtBytes(b.down)}`;
-    if (b.up > 0) {
-      const r = rect(svgNS, x + 1, y, Math.max(bw - 2, 1), (b.up / max) * plotH, '#38d39f');
+  names.forEach((name, i) => {
+    const x = margin.left + i * (barW + gap);
+    const segs = byUser.get(name);
+    const totals = segs.map((s) => s.uplink + s.downlink);
+    const grand = totals.reduce((a, b) => a + b, 0);
+    let tip = `${name} 总计 ${fmtBytes(grand)}`;
+    for (const s of segs) tip += `\n${protoLabel(s.protocol)} ${fmtBytes(s.uplink + s.downlink)}`;
+    let yCursor = margin.top + plotH;
+    for (let k = 0; k < segs.length; k++) {
+      const h = (totals[k] / max) * plotH;
+      yCursor -= h;
+      const r = rect(svgNS, x, yCursor, barW, h, protoColor(segs[k].protocol));
       r.appendChild(titleEl(svgNS, tip));
       svg.appendChild(r);
     }
-    if (b.down > 0) {
-      const r = rect(svgNS, x + 1, y + (b.up / max) * plotH, Math.max(bw - 2, 1), (b.down / max) * plotH, '#5aa2ff');
-      r.appendChild(titleEl(svgNS, tip));
-      svg.appendChild(r);
-    }
-  }
-
-  const labelW = 52;
-  const labelEvery = Math.max(1, Math.ceil(labelW / bw));
-  for (let i = 0; i < buckets.length; i += labelEvery) {
-    const x = margin.left + i * bw + bw / 2;
-    if (x - labelW / 2 < 0 || x + labelW / 2 > w) continue;
-    svg.appendChild(axisText(svgNS, histLabel(buckets[i].day, width), x, margin.top + plotH + 14, 'middle'));
-  }
+    svg.appendChild(axisText(svgNS, shortName(name), x + barW / 2, margin.top + plotH + 16, 'middle'));
+  });
 
   const legend = document.createElement('div');
   legend.style.marginTop = '6px';
   legend.style.fontSize = '12px';
   legend.style.color = 'var(--muted)';
-  legend.innerHTML = '<span style="color:#38d39f">■</span> 上行 &nbsp; <span style="color:#5aa2ff">■</span> 下行';
+  const protos = [...new Set(users.map((u) => u.protocol))];
+  legend.innerHTML = protos.map((p) =>
+    `<span style="color:${protoColor(p)}">■</span> ${protoLabel(p)}`).join(' &nbsp; ');
   el.appendChild(svg);
   el.appendChild(legend);
 }
@@ -557,6 +535,10 @@ document.getElementById('conn-user').addEventListener('change', () => {
   connLimit = CONN_PAGE;
   refreshConnections().catch(() => {});
 });
+document.getElementById('conn-status').addEventListener('change', () => {
+  connLimit = CONN_PAGE;
+  refreshConnections().catch(() => {});
+});
 document.getElementById('conn-more').addEventListener('click', () => {
   connLimit = Math.min(connLimit + CONN_PAGE, CONN_MAX);
   refreshConnections().catch(() => {});
@@ -588,7 +570,7 @@ window.addEventListener('resize', () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
     refreshChart().catch(() => {});
-    drawHistoryChart(lastHistDays);
+    drawHistoryChart(lastHistUsers);
   }, 200);
 });
 

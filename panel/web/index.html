@@ -61,6 +61,13 @@
       <select id="conn-user" style="margin-left:8px;">
         <option value="all">全部用户</option>
       </select>
+      <select id="conn-status" style="margin-left:8px;">
+        <option value="all">全部状态</option>
+        <option value="direct">直连</option>
+        <option value="warp">WARP</option>
+        <option value="blocked">封禁</option>
+        <option value="empty">未知</option>
+      </select>
     </h2>
     <div class="table-wrap conn-scroll">
       <table id="conn-table">
@@ -90,8 +97,9 @@
       </select>
       <select id="hist-range" style="margin-left:8px;">
         <option value="7">近 7 天</option>
-        <option value="30">近 30 天</option>
-        <option value="90">近 90 天</option>
+        <option value="30">近 1 个月</option>
+        <option value="90">近 3 个月</option>
+        <option value="180">近半年</option>
         <option value="365">近 1 年</option>
         <option value="1095">近 3 年</option>
         <option value="custom">自定义</option>

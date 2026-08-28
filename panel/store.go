@@ -303,7 +303,7 @@ type connectionRow struct {
 	Status   string
 }
 
-func (s *store) connections(limit int, protocol, username string) ([]connectionRow, error) {
+func (s *store) connections(limit int, protocol, username, status string) ([]connectionRow, error) {
 	q := `SELECT ts, protocol, username, source, target, status FROM connections`
 	var args []any
 	var conds []string
@@ -314,6 +314,14 @@ func (s *store) connections(limit int, protocol, username string) ([]connectionR
 	if username != "" {
 		conds = append(conds, `username = ?`)
 		args = append(args, username)
+	}
+	if status != "" {
+		if status == "empty" {
+			conds = append(conds, `status = ''`)
+		} else {
+			conds = append(conds, `status = ?`)
+			args = append(args, status)
+		}
 	}
 	if len(conds) > 0 {
 		q += ` WHERE ` + strings.Join(conds, ` AND `)
