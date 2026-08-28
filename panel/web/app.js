@@ -291,12 +291,19 @@ function drawHistoryChart(users) {
   const names = [...byUser.keys()].sort();
 
   const svgNS = 'http://www.w3.org/2000/svg';
-  const barW = 46;
+  const maxBarW = 140;
+  const minBarW = 12;
   const gap = 14;
   const height = 260;
   const margin = { top: 6, right: 12, bottom: 44, left: 56 };
-  const plotW = Math.max(names.length * (barW + gap) - gap, 1);
-  const w = Math.max(el.clientWidth - 16, margin.left + plotW + margin.right);
+  const containerW = Math.max(el.clientWidth - 16, 320);
+  const available = containerW - margin.left - margin.right;
+  let barW = (available + gap) / names.length - gap;
+  if (barW > maxBarW) barW = maxBarW;
+  if (barW < minBarW) barW = minBarW;
+  const plotW = names.length * (barW + gap) - gap;
+  const w = Math.max(containerW, margin.left + plotW + margin.right);
+  const startX = margin.left + Math.max(0, (w - margin.left - margin.right - plotW) / 2);
   const plotH = height - margin.top - margin.bottom;
 
   const max = Math.max(1, ...names.map((name) =>
@@ -313,7 +320,7 @@ function drawHistoryChart(users) {
     const line = document.createElementNS(svgNS, 'line');
     line.setAttribute('x1', margin.left);
     line.setAttribute('y1', y);
-    line.setAttribute('x2', margin.left + plotW);
+    line.setAttribute('x2', w - margin.right);
     line.setAttribute('y2', y);
     line.setAttribute('stroke', '#262d36');
     line.setAttribute('stroke-width', '1');
@@ -322,7 +329,7 @@ function drawHistoryChart(users) {
   }
 
   names.forEach((name, i) => {
-    const x = margin.left + i * (barW + gap);
+    const x = startX + i * (barW + gap);
     const segs = byUser.get(name);
     const totals = segs.map((s) => s.uplink + s.downlink);
     const grand = totals.reduce((a, b) => a + b, 0);
