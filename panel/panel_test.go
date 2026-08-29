@@ -199,7 +199,7 @@ func TestSingboxMatcher(t *testing.T) {
 	}
 }
 
-func TestResetAllTraffic(t *testing.T) {
+func TestMonthlyTotals(t *testing.T) {
 	st, err := openStore(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -207,37 +207,29 @@ func TestResetAllTraffic(t *testing.T) {
 	defer st.Close()
 
 	now := time.Now()
-	if err := st.addTraffic("vmess", "user1", 1000, 2000, now); err != nil {
+	thisMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).Unix()
+	lastMonth := time.Date(now.Year(), now.Month()-1, 1, 0, 0, 0, 0, now.Location())
+
+	if err := st.addTraffic("vmess", "alice", 100, 200, now); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.addTraffic("vmess", "user1", 500, 700, now.Add(time.Hour)); err != nil {
+	if err := st.addTraffic("vmess", "bob", 300, 400, lastMonth); err != nil {
 		t.Fatal(err)
 	}
 
-	ts := now.Add(2 * time.Hour).Unix()
-	if err := st.resetAllTraffic(ts); err != nil {
-		t.Fatal(err)
-	}
-
-	totals, err := st.totals()
+	m, err := st.monthlyTotals(thisMonth)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(totals) != 1 {
-		t.Fatalf("expected 1 total, got %d", len(totals))
+	if len(m) != 1 {
+		t.Fatalf("expected 1 monthly row, got %d: %+v", len(m), m)
 	}
-	r := totals[0]
-	if r.Uplink != 1500 || r.Downlink != 2700 {
-		t.Errorf("lifetime totals must not change after reset: %+v", r)
+	r, ok := m["vmess|alice"]
+	if !ok || r.Uplink != 100 || r.Downlink != 200 {
+		t.Errorf("monthly alice = %+v", r)
 	}
-	if r.ResetUplink != 1500 || r.ResetDownlink != 2700 {
-		t.Errorf("reset snapshot wrong: %+v", r)
-	}
-	if r.ResetAt != ts {
-		t.Errorf("reset_at = %d, want %d", r.ResetAt, ts)
-	}
-	if r.Uplink-r.ResetUplink != 0 || r.Downlink-r.ResetDownlink != 0 {
-		t.Errorf("period traffic should be zero right after reset: %+v", r)
+	if _, ok := m["vmess|bob"]; ok {
+		t.Errorf("last month traffic should not appear in monthly totals")
 	}
 }
 

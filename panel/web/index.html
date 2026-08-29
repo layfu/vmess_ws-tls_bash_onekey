@@ -10,16 +10,15 @@
 <header>
   <h1>流量面板</h1>
   <div class="stats">
-    <div class="stat"><span class="label">总上行</span><span class="value" id="total-up">—</span></div>
-    <div class="stat"><span class="label">总下行</span><span class="value" id="total-down">—</span></div>
+    <div class="stat"><span class="label">当月上行</span><span class="value" id="total-up">—</span></div>
+    <div class="stat"><span class="label">当月下行</span><span class="value" id="total-down">—</span></div>
     <div class="stat"><span class="label">用户数</span><span class="value" id="total-users">—</span></div>
   </div>
 </header>
 
 <main>
   <section>
-    <h2>用户流量 <span class="hint">上行/下行/总量为当前周期，累计为终身总量</span>
-      <button id="reset-all" class="btn">全部重置</button>
+    <h2>当月流量 <span class="hint">上行/下行/总量为当月流量，累计为终身总量</span>
     </h2>
     <div class="table-wrap">
       <table id="users-table">
@@ -31,7 +30,6 @@
             <th>下行</th>
             <th>总量</th>
             <th>累计</th>
-            <th>周期起始</th>
             <th>状态</th>
             <th>最近活跃</th>
           </tr>

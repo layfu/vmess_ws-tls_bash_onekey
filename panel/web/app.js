@@ -72,7 +72,6 @@ async function refreshOverview() {
       `<td class="mono">${fmtBytes(u.downlink)}</td>` +
       `<td class="mono">${fmtBytes(u.total)}</td>` +
       `<td class="mono">${fmtBytes(u.lifetime_total)}</td>` +
-      `<td class="mono">${u.reset_at ? fmtTime(u.reset_at) : '—'}</td>` +
       `<td><span class="badge ${u.online ? 'online' : ''}">${u.online ? '在线' : '离线'}</span></td>` +
       `<td class="mono">${fmtTime(u.last_seen)}</td>`;
     tbody.appendChild(tr);
@@ -279,13 +278,6 @@ async function refreshHistory() {
   }
   lastHistUsers = data.users || [];
   drawHistoryChart(lastHistUsers);
-}
-
-async function resetAll() {
-  if (!confirm('确定要重置流量统计吗？将把「当前周期」归零，历史数据与累计总量不会丢失。')) return;
-  const res = await fetch('api/reset', { method: 'POST', cache: 'no-store' });
-  if (!res.ok) throw new Error(res.statusText);
-  await refreshOverview();
 }
 
 function protoColor(p) {
@@ -557,9 +549,6 @@ document.getElementById('chart-hours').addEventListener('change', refreshChart);
 document.getElementById('conn-more').addEventListener('click', () => {
   connLimit = Math.min(connLimit + CONN_PAGE, CONN_MAX);
   refreshConnections().catch(() => {});
-});
-document.getElementById('reset-all').addEventListener('click', () => {
-  resetAll().catch(() => {});
 });
 document.getElementById('hist-range').addEventListener('change', () => {
   document.getElementById('hist-custom').style.display =

@@ -24,7 +24,6 @@ type userInfo struct {
 	LifetimeDown  int64  `json:"lifetime_down"`
 	LifetimeTotal int64  `json:"lifetime_total"`
 	LastSeen      int64  `json:"last_seen"`
-	ResetAt       int64  `json:"reset_at"`
 	Online        bool   `json:"online"`
 }
 
@@ -34,33 +33,40 @@ func (a *api) overview(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	now := time.Now().Unix()
+	now := time.Now()
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).Unix()
+	monthly, err := a.store.monthlyTotals(monthStart)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	users := make([]userInfo, 0, len(totals))
 	var totalUp, totalDown int64
 	for _, t := range totals {
-		periodUp := t.Uplink - t.ResetUplink
-		periodDown := t.Downlink - t.ResetDownlink
+		monthUp, monthDown := int64(0), int64(0)
+		if m, ok := monthly[t.Protocol+"|"+t.Username]; ok {
+			monthUp, monthDown = m.Uplink, m.Downlink
+		}
 		users = append(users, userInfo{
 			Protocol:      t.Protocol,
 			Username:      t.Username,
-			Uplink:        periodUp,
-			Downlink:      periodDown,
-			Total:         periodUp + periodDown,
+			Uplink:        monthUp,
+			Downlink:      monthDown,
+			Total:         monthUp + monthDown,
 			LifetimeUp:    t.Uplink,
 			LifetimeDown:  t.Downlink,
 			LifetimeTotal: t.Uplink + t.Downlink,
 			LastSeen:      t.LastSeen,
-			ResetAt:       t.ResetAt,
-			Online:        t.LastSeen > 0 && now-t.LastSeen <= a.onlineWin,
+			Online:        t.LastSeen > 0 && now.Unix()-t.LastSeen <= a.onlineWin,
 		})
-		totalUp += periodUp
-		totalDown += periodDown
+		totalUp += monthUp
+		totalDown += monthDown
 	}
 	writeJSON(w, map[string]any{
 		"users":      users,
 		"total_up":   totalUp,
 		"total_down": totalDown,
-		"updated_at": now,
+		"updated_at": now.Unix(),
 	})
 }
 
@@ -194,20 +200,6 @@ func (a *api) history(w http.ResponseWriter, r *http.Request) {
 		"total_down": totalDown,
 		"users":      users,
 	})
-}
-
-func (a *api) reset(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		writeJSON(w, map[string]string{"error": "method not allowed"})
-		return
-	}
-	now := time.Now().Unix()
-	if err := a.store.resetAllTraffic(now); err != nil {
-		writeErr(w, err)
-		return
-	}
-	writeJSON(w, map[string]any{"reset_at": now})
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

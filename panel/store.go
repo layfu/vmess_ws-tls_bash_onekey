@@ -24,9 +24,6 @@ CREATE TABLE IF NOT EXISTS totals (
   uplink INTEGER NOT NULL DEFAULT 0,
   downlink INTEGER NOT NULL DEFAULT 0,
   last_seen INTEGER NOT NULL DEFAULT 0,
-  reset_at INTEGER NOT NULL DEFAULT 0,
-  reset_uplink INTEGER NOT NULL DEFAULT 0,
-  reset_downlink INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (protocol, username)
 );
 CREATE TABLE IF NOT EXISTS hourly (
@@ -47,6 +44,7 @@ CREATE TABLE IF NOT EXISTS connections (
   status TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_connections_ts ON connections(ts);
+CREATE INDEX IF NOT EXISTS idx_hourly_hour ON hourly(hour);
 `
 
 type store struct {
@@ -80,14 +78,6 @@ func migrate(db *sql.DB) error {
 		table string
 		add   []struct{ name, ddl string }
 	}{
-		{
-			table: "totals",
-			add: []struct{ name, ddl string }{
-				{"reset_at", `ALTER TABLE totals ADD COLUMN reset_at INTEGER NOT NULL DEFAULT 0`},
-				{"reset_uplink", `ALTER TABLE totals ADD COLUMN reset_uplink INTEGER NOT NULL DEFAULT 0`},
-				{"reset_downlink", `ALTER TABLE totals ADD COLUMN reset_downlink INTEGER NOT NULL DEFAULT 0`},
-			},
-		},
 		{
 			table: "connections",
 			add: []struct{ name, ddl string }{
@@ -197,18 +187,15 @@ func (s *store) updateConnectionSource(oldSource, newSource string) error {
 }
 
 type totalRow struct {
-	Protocol      string
-	Username      string
-	Uplink        int64
-	Downlink      int64
-	LastSeen      int64
-	ResetAt       int64
-	ResetUplink   int64
-	ResetDownlink int64
+	Protocol string
+	Username string
+	Uplink   int64
+	Downlink int64
+	LastSeen int64
 }
 
 func (s *store) totals() ([]totalRow, error) {
-	rows, err := s.db.Query(`SELECT protocol, username, uplink, downlink, last_seen, reset_at, reset_uplink, reset_downlink FROM totals ORDER BY protocol, username`)
+	rows, err := s.db.Query(`SELECT protocol, username, uplink, downlink, last_seen FROM totals ORDER BY protocol, username`)
 	if err != nil {
 		return nil, err
 	}
@@ -216,7 +203,7 @@ func (s *store) totals() ([]totalRow, error) {
 	var out []totalRow
 	for rows.Next() {
 		var r totalRow
-		if err := rows.Scan(&r.Protocol, &r.Username, &r.Uplink, &r.Downlink, &r.LastSeen, &r.ResetAt, &r.ResetUplink, &r.ResetDownlink); err != nil {
+		if err := rows.Scan(&r.Protocol, &r.Username, &r.Uplink, &r.Downlink, &r.LastSeen); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -224,12 +211,33 @@ func (s *store) totals() ([]totalRow, error) {
 	return out, rows.Err()
 }
 
-// resetAllTraffic records a new "period start" marker for every user. It only
-// snapshots the current cumulative counters into reset_* columns; the lifetime
-// totals and hourly history are left untouched so historical data is never lost.
-func (s *store) resetAllTraffic(ts int64) error {
-	_, err := s.db.Exec(`UPDATE totals SET reset_at = ?, reset_uplink = uplink, reset_downlink = downlink`, ts)
-	return err
+type monthlyRow struct {
+	Protocol string
+	Username string
+	Uplink   int64
+	Downlink int64
+}
+
+// monthlyTotals returns per-user traffic summed over the hourly buckets since
+// the given timestamp (used for the current-month view).
+func (s *store) monthlyTotals(since int64) (map[string]monthlyRow, error) {
+	rows, err := s.db.Query(
+		`SELECT protocol, username, SUM(uplink), SUM(downlink) FROM hourly WHERE hour >= ? GROUP BY protocol, username`,
+		since,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	m := make(map[string]monthlyRow)
+	for rows.Next() {
+		var r monthlyRow
+		if err := rows.Scan(&r.Protocol, &r.Username, &r.Uplink, &r.Downlink); err != nil {
+			return nil, err
+		}
+		m[r.Protocol+"|"+r.Username] = r
+	}
+	return m, rows.Err()
 }
 
 type hourlyRow struct {

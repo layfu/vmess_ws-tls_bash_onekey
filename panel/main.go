@@ -61,7 +61,6 @@ func main() {
 	mux.HandleFunc("/api/traffic", a.traffic)
 	mux.HandleFunc("/api/connections", a.connections)
 	mux.HandleFunc("/api/history", a.history)
-	mux.HandleFunc("/api/reset", a.reset)
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, map[string]string{"status": "ok"})
 	})
