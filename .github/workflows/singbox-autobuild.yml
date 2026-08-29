@@ -1,0 +1,55 @@
+name: Auto rebuild sing-box (v2ray_api)
+
+# 每天检查上游 sing-box 是否发布新版本，若新则打 singbox-v* tag，
+# 用 PAT 推送从而触发 release.yml 重新编译带 v2ray_api 的 sing-box。
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: singbox-autobuild
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  check-and-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.AUTO_RELEASE_TOKEN }}
+          fetch-depth: 0
+
+      - name: Get latest upstream sing-box version
+        id: upstream
+        run: |
+          UP=$(curl -sS -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r .tag_name)
+          echo "version=${UP}" >> "$GITHUB_OUTPUT"
+
+      - name: Get sing-box version in current latest release
+        id: current
+        run: |
+          BODY=$(curl -sS -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/layfu/vmess_ws-tls_bash_onekey/releases/latest | jq -r '.body // empty')
+          CUR=$(printf '%s' "$BODY" | grep -oE 'sing-box: v[0-9]+\.[0-9]+\.[0-9]+' | head -1 | awk '{print $2}')
+          echo "version=${CUR:-}" >> "$GITHUB_OUTPUT"
+
+      - name: Tag if newer
+        if: steps.current.outputs.version != steps.upstream.outputs.version && steps.upstream.outputs.version != ''
+        env:
+          NEW_TAG: singbox-${{ steps.upstream.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git rev-parse "${NEW_TAG}" >/dev/null 2>&1; then
+            echo "tag ${NEW_TAG} already exists, skip"
+            exit 0
+          fi
+          git tag "${NEW_TAG}"
+          git push origin "${NEW_TAG}"

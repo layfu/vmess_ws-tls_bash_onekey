@@ -6,6 +6,7 @@ on:
   push:
     tags:
       - 'v*'
+      - 'singbox-v*'
   workflow_dispatch:
 
 permissions:
@@ -149,7 +150,17 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Detect built sing-box version
+        run: |
+          TAG=$(git ls-remote --tags https://github.com/SagerNet/sing-box.git 'refs/tags/v*' \
+            | sed 's|.*refs/tags/||; s|\^{}||' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          echo "SINGBOX_TAG=${TAG}" >> "$GITHUB_ENV"
+
       - name: Create release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/**/*
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "$GITHUB_REF_NAME" \
+            --notes "sing-box: ${SINGBOX_TAG}"
