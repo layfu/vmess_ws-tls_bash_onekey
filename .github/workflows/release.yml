@@ -126,7 +126,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           GOARM: ${{ matrix.goarm }}
         run: |
-          go build -trimpath -ldflags "-s -w" \
+          go build -trimpath -ldflags "-s -w -X github.com/sagernet/sing-box/constant.Version=${SINGBOX_TAG#v}" \
             -tags "with_v2ray_api,with_clash_api,with_utls,with_acme" \
             -o "sing-box-v2rayapi-linux-${{ matrix.arch }}" ./cmd/sing-box
           sha256sum "sing-box-v2rayapi-linux-${{ matrix.arch }}" > "sing-box-v2rayapi-linux-${{ matrix.arch }}.sha256"
