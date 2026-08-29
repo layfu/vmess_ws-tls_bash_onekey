@@ -672,8 +672,34 @@ singbox_v2rayapi_update() {
         echo -e "${Red} 当前 sing-box 非 v2ray_api 定制构建。可先在「安装 流量面板」时自动下载，或手动替换。 ${Font}"
         return 0
     fi
+
+    local current_ver
+    current_ver="$(${singbox_bin_dir} version -n 2>/dev/null | head -n 1)"
+    echo -e "${OK} ${GreenBG} 当前 sing-box 版本: ${current_ver} ${Font}"
+
+    local tmp_file latest_ver
+    tmp_file="$(mktemp)"
+    if ! curl -sS -H "Accept: application/vnd.github.v3+json" -o "$tmp_file" "https://api.github.com/repos/${panel_repo}/releases/latest"; then
+        rm -f "$tmp_file"
+        echo -e "${Error} ${RedBG} 获取版本信息失败，请检查网络连接 ${Font}"
+        return 1
+    fi
+    latest_ver="$(sed 'y/,/\n/' "$tmp_file" | grep '"body"' | grep -oE 'sing-box: *v[0-9]+\.[0-9]+\.[0-9]+' | head -1 | awk '{print $NF}')"
+    rm -f "$tmp_file"
+
+    if [[ -z "$latest_ver" ]]; then
+        echo -e "${Error} ${RedBG} 无法获取带 v2ray_api 的 sing-box 版本信息，将直接下载 ${Font}"
+    else
+        latest_ver="${latest_ver#v}"
+        if [[ "${current_ver}" == "${latest_ver}" ]]; then
+            echo -e "${OK} ${GreenBG} 当前已是最新版本 ${latest_ver}，无需更新 ${Font}"
+            return 0
+        fi
+        echo -e "${OK} ${GreenBG} 发现新版本: ${latest_ver} (当前: ${current_ver}) ${Font}"
+    fi
+
     local confirm=""
-    read -rp "是否重新下载最新 sing-box (v2ray_api) 并替换（默认 Y，原二进制备份为 .bak）? [Y/n]: " confirm
+    read -rp "是否下载最新 sing-box (v2ray_api) 并替换（默认 Y，原二进制备份为 .bak）? [Y/n]: " confirm
     [[ -z "${confirm}" ]] && confirm="Y"
     case "${confirm}" in
     [yY][eE][sS] | [yY])
