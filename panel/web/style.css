@@ -36,6 +36,14 @@ header h1 { font-size: 18px; margin: 0; }
 .stat .label { color: var(--muted); font-size: 12px; }
 .stat .value { font-size: 18px; font-weight: 600; margin-top: 2px; }
 
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
 main { max-width: 1080px; margin: 0 auto; padding: 20px 24px 40px; }
 
 section { margin-bottom: 28px; }
@@ -136,6 +144,13 @@ input[type="date"] {
   cursor: pointer;
 }
 .btn:hover { opacity: 0.88; }
+.btn.ghost {
+  background: var(--panel);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  margin-left: 0;
+}
+.btn.ghost:hover { color: var(--text); }
 
 .hist-summary {
   display: flex;
@@ -154,6 +169,69 @@ input[type="date"] {
   overflow-y: hidden;
   margin-bottom: 12px;
   min-height: 60px;
+}
+
+/* multi-select filter dropdown */
+.ms { position: relative; }
+.ms-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 110px;
+  padding: 4px 10px;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+}
+.ms-trigger:hover { border-color: var(--muted); }
+.ms-label { overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
+.ms-caret { color: var(--muted); font-size: 10px; flex: none; }
+.ms-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  min-width: 180px;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  z-index: 200;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  display: none;
+}
+.ms.open .ms-menu { display: block; }
+.ms-items { padding: 4px; }
+.ms-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.ms-item:hover { background: rgba(255, 255, 255, 0.04); }
+.ms-item input { margin: 0; accent-color: var(--accent); }
+.ms-item span { white-space: nowrap; }
+
+@media (max-width: 640px) {
+  header { flex-direction: column; align-items: flex-start; gap: 12px; padding: 14px 16px; }
+  .stats { gap: 16px; }
+  .stat .value { font-size: 15px; }
+  main { padding: 16px 12px 32px; }
+  .filters { gap: 6px; }
+  .filters .ms { flex: 1 1 auto; }
+  .ms-trigger { width: 100%; min-width: 0; }
+  .ms-menu { left: 0; right: 0; min-width: 0; }
+  section h2 .hint { display: block; margin-left: 0; margin-top: 4px; }
+  section h2 .btn { margin-left: 8px; }
 }
 
 footer {

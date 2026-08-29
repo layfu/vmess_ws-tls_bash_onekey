@@ -154,7 +154,7 @@ func TestCorrelator(t *testing.T) {
 	c.addVmess(now, "user1", "example.com:443", "127.0.0.1:54321")
 	c.addWs(now+1, "9.9.9.9")
 
-	rows, err := st.connections(10, "", "", "")
+	rows, err := st.connections(10, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ func TestSingboxMatcher(t *testing.T) {
 	m.handle("+0800 2026-08-27 12:00:00 INFO [2 5ms] inbound/anytls[anytls-in]: [bob] inbound connection from 5.6.7.8:2000 to ad.example.com:443")
 	m.handle("+0800 2026-08-27 12:00:00 INFO [2 12ms] outbound/block[block]: blocked connection to ad.example.com:443")
 
-	rows, err := st.connections(10, "", "", "")
+	rows, err := st.connections(10, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +256,7 @@ func TestHourlyRange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rows, err := st.hourlyRange(base.Unix()-3600, base.Unix()+7200, "", "")
+	rows, err := st.hourlyRange(base.Unix()-3600, base.Unix()+7200, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +264,7 @@ func TestHourlyRange(t *testing.T) {
 		t.Fatalf("expected 2 rows, got %d", len(rows))
 	}
 
-	rows, err = st.hourlyRange(base.Unix()-3600, base.Unix()+7200, "vmess", "")
+	rows, err = st.hourlyRange(base.Unix()-3600, base.Unix()+7200, []string{"vmess"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +272,7 @@ func TestHourlyRange(t *testing.T) {
 		t.Errorf("protocol filter failed: %+v", rows)
 	}
 
-	rows, err = st.hourlyRange(base.Unix()-3600, base.Unix()+7200, "", "bob")
+	rows, err = st.hourlyRange(base.Unix()-3600, base.Unix()+7200, nil, []string{"bob"})
 	if err != nil {
 		t.Fatal(err)
 	}

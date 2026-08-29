@@ -266,16 +266,20 @@ type hourlyRangeRow struct {
 	Downlink int64
 }
 
-func (s *store) hourlyRange(start, end int64, protocol, username string) ([]hourlyRangeRow, error) {
+func (s *store) hourlyRange(start, end int64, protocols, usernames []string) ([]hourlyRangeRow, error) {
 	q := `SELECT hour, protocol, username, uplink, downlink FROM hourly WHERE hour >= ? AND hour < ?`
 	args := []any{start, end}
-	if protocol != "" {
-		q += ` AND protocol = ?`
-		args = append(args, protocol)
+	if len(protocols) > 0 {
+		q += ` AND ` + inClause(`protocol`, len(protocols))
+		for _, p := range protocols {
+			args = append(args, p)
+		}
 	}
-	if username != "" {
-		q += ` AND username = ?`
-		args = append(args, username)
+	if len(usernames) > 0 {
+		q += ` AND ` + inClause(`username`, len(usernames))
+		for _, u := range usernames {
+			args = append(args, u)
+		}
 	}
 	q += ` ORDER BY hour`
 	rows, err := s.db.Query(q, args...)
@@ -303,25 +307,33 @@ type connectionRow struct {
 	Status   string
 }
 
-func (s *store) connections(limit int, protocol, username, status string) ([]connectionRow, error) {
+func (s *store) connections(limit int, protocols, usernames, statuses []string) ([]connectionRow, error) {
 	q := `SELECT ts, protocol, username, source, target, status FROM connections`
 	var args []any
 	var conds []string
-	if protocol != "" {
-		conds = append(conds, `protocol = ?`)
-		args = append(args, protocol)
-	}
-	if username != "" {
-		conds = append(conds, `username = ?`)
-		args = append(args, username)
-	}
-	if status != "" {
-		if status == "empty" {
-			conds = append(conds, `status = ''`)
-		} else {
-			conds = append(conds, `status = ?`)
-			args = append(args, status)
+	if len(protocols) > 0 {
+		conds = append(conds, inClause(`protocol`, len(protocols)))
+		for _, p := range protocols {
+			args = append(args, p)
 		}
+	}
+	if len(usernames) > 0 {
+		conds = append(conds, inClause(`username`, len(usernames)))
+		for _, u := range usernames {
+			args = append(args, u)
+		}
+	}
+	if len(statuses) > 0 {
+		var ors []string
+		for _, st := range statuses {
+			if st == "empty" {
+				ors = append(ors, `status = ''`)
+			} else {
+				ors = append(ors, `status = ?`)
+				args = append(args, st)
+			}
+		}
+		conds = append(conds, `(`+strings.Join(ors, ` OR `)+`)`)
 	}
 	if len(conds) > 0 {
 		q += ` WHERE ` + strings.Join(conds, ` AND `)
@@ -360,4 +372,9 @@ func (s *store) pruneHourly(maxAge time.Duration) {
 		cutoff := time.Now().Add(-maxAge).Unix()
 		_, _ = s.db.Exec(`DELETE FROM hourly WHERE hour < ?`, cutoff)
 	}
+}
+
+// inClause builds "col IN (?,?,...)" with the given number of placeholders.
+func inClause(col string, n int) string {
+	return col + ` IN (` + strings.TrimSuffix(strings.Repeat(`?,`, n), `,`) + `)`
 }

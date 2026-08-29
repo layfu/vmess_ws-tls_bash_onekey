@@ -81,56 +81,139 @@ async function refreshOverview() {
 
 let allUsers = [];
 
-function buildConnFilters(users) {
-  allUsers = users;
-  const protoSel = document.getElementById('conn-protocol');
-  const prevProto = protoSel.value;
-  const protos = ['all'];
-  protoSel.innerHTML = '';
-  protoSel.appendChild(option('all', '全部协议'));
-  for (const u of users) {
-    if (!protos.includes(u.protocol)) {
-      protos.push(u.protocol);
-      protoSel.appendChild(option(u.protocol, protoLabel(u.protocol)));
-    }
+// Multi-select dropdown filter (checkbox list in a dropdown panel).
+function multiSelect(el, placeholder, onChange) {
+  const state = { values: [], options: [], open: false };
+  el.innerHTML = '';
+
+  const trigger = document.createElement('button');
+  trigger.type = 'button';
+  trigger.className = 'ms-trigger';
+  const label = document.createElement('span');
+  label.className = 'ms-label';
+  trigger.appendChild(label);
+  const caret = document.createElement('span');
+  caret.className = 'ms-caret';
+  caret.textContent = '▾';
+  trigger.appendChild(caret);
+
+  const menu = document.createElement('div');
+  menu.className = 'ms-menu';
+  const items = document.createElement('div');
+  items.className = 'ms-items';
+  menu.appendChild(items);
+
+  el.appendChild(trigger);
+  el.appendChild(menu);
+
+  function updateLabel() {
+    if (state.values.length === 0) { label.textContent = placeholder; return; }
+    const names = state.values.map((v) => {
+      const o = state.options.find((x) => x.value === v);
+      return o ? o.label : v;
+    });
+    label.textContent = names.length <= 2 ? names.join('、') : `已选 ${names.length} 项`;
   }
-  protoSel.value = protos.includes(prevProto) ? prevProto : 'all';
-  buildConnUserOptions();
+
+  function render() {
+    items.innerHTML = '';
+    for (const o of state.options) {
+      const lab = document.createElement('label');
+      lab.className = 'ms-item';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.value = o.value;
+      cb.checked = state.values.includes(o.value);
+      cb.addEventListener('change', () => {
+        if (cb.checked) {
+          if (!state.values.includes(o.value)) state.values.push(o.value);
+        } else {
+          state.values = state.values.filter((v) => v !== o.value);
+        }
+        updateLabel();
+        if (onChange) onChange();
+      });
+      const span = document.createElement('span');
+      span.textContent = o.label;
+      lab.appendChild(cb);
+      lab.appendChild(span);
+      items.appendChild(lab);
+    }
+    updateLabel();
+  }
+
+  trigger.addEventListener('click', (e) => {
+    e.stopPropagation();
+    state.open = !state.open;
+    el.classList.toggle('open', state.open);
+  });
+  document.addEventListener('click', (e) => {
+    if (!el.contains(e.target)) { state.open = false; el.classList.remove('open'); }
+  });
+
+  return {
+    setOptions(options) {
+      state.options = options;
+      state.values = state.values.filter((v) => options.some((o) => o.value === v));
+      render();
+    },
+    getValues() { return state.values.slice(); },
+    clear() { state.values = []; render(); },
+    isEmpty() { return state.values.length === 0; },
+  };
 }
 
-function buildConnUserOptions() {
-  const sel = document.getElementById('conn-user');
-  const prev = sel.value;
-  const proto = document.getElementById('conn-protocol').value;
-  const options = ['all'];
-  sel.innerHTML = '';
-  sel.appendChild(option('all', '全部用户'));
-  for (const u of allUsers) {
-    if (proto !== 'all' && u.protocol !== proto) continue;
-    const val = u.protocol + ':' + u.username;
-    options.push(val);
-    sel.appendChild(option(val, protoLabel(u.protocol) + ' · ' + u.username));
-  }
-  sel.value = options.includes(prev) ? prev : 'all';
+function distinctProtocols(users) {
+  const out = [];
+  for (const u of users) if (!out.includes(u.protocol)) out.push(u.protocol);
+  return out;
+}
+
+function distinctUsernames(users) {
+  const out = [];
+  for (const u of users) if (!out.includes(u.username)) out.push(u.username);
+  return out;
 }
 
 const CONN_PAGE = 50;
 const CONN_MAX = 1000;
 let connLimit = CONN_PAGE;
 
-async function refreshConnections() {
-  const proto = document.getElementById('conn-protocol').value;
-  const user = document.getElementById('conn-user').value;
-  const status = document.getElementById('conn-status').value;
+const connProtocolMS = multiSelect(document.getElementById('conn-protocol'), '全部协议', () => { connLimit = CONN_PAGE; refreshConnections().catch(() => {}); });
+const connUserMS = multiSelect(document.getElementById('conn-user'), '全部用户', () => { connLimit = CONN_PAGE; refreshConnections().catch(() => {}); });
+const connStatusMS = multiSelect(document.getElementById('conn-status'), '全部状态', () => { connLimit = CONN_PAGE; refreshConnections().catch(() => {}); });
+const histProtocolMS = multiSelect(document.getElementById('hist-protocol'), '全部协议', () => { refreshHistory().catch(() => {}); });
+const histUserMS = multiSelect(document.getElementById('hist-user'), '全部用户', () => { refreshHistory().catch(() => {}); });
+const chartUserMS = multiSelect(document.getElementById('chart-user'), '全部用户', () => { refreshChart().catch(() => {}); });
+
+connStatusMS.setOptions([
+  { value: 'direct', label: '直连' },
+  { value: 'warp', label: 'WARP' },
+  { value: 'blocked', label: '封禁' },
+  { value: 'empty', label: '未知' },
+]);
+
+function buildFilters(users) {
+  allUsers = users;
+  const protos = distinctProtocols(users).map((p) => ({ value: p, label: protoLabel(p) }));
+  const names = distinctUsernames(users).map((n) => ({ value: n, label: n }));
+  connProtocolMS.setOptions(protos);
+  connUserMS.setOptions(names);
+  histProtocolMS.setOptions(protos);
+  histUserMS.setOptions(names);
+  chartUserMS.setOptions(names);
+}
+
+function connQueryParams() {
   const qs = [`limit=${connLimit}`];
-  if (proto !== 'all') qs.push('protocol=' + encodeURIComponent(proto));
-  if (user !== 'all') {
-    const i = user.indexOf(':');
-    qs.push('protocol=' + encodeURIComponent(user.slice(0, i)));
-    qs.push('username=' + encodeURIComponent(user.slice(i + 1)));
-  }
-  if (status !== 'all') qs.push('status=' + encodeURIComponent(status));
-  const data = await fetchJSON('api/connections?' + qs.join('&'));
+  for (const p of connProtocolMS.getValues()) qs.push('protocol=' + encodeURIComponent(p));
+  for (const u of connUserMS.getValues()) qs.push('username=' + encodeURIComponent(u));
+  for (const s of connStatusMS.getValues()) qs.push('status=' + encodeURIComponent(s));
+  return qs;
+}
+
+async function refreshConnections() {
+  const data = await fetchJSON('api/connections?' + connQueryParams().join('&'));
   const tbody = document.querySelector('#conn-table tbody');
   tbody.innerHTML = '';
   for (const c of data.connections) {
@@ -153,51 +236,6 @@ function updateConnMore(count) {
   btn.style.display = (connLimit < CONN_MAX && count >= connLimit) ? '' : 'none';
 }
 
-function buildUserSelect(users) {
-  const sel = document.getElementById('chart-user');
-  const prev = sel.value;
-  const options = ['all'];
-  for (const u of users) options.push(u.protocol + ':' + u.username);
-  sel.innerHTML = '';
-  sel.appendChild(option('all', '全部用户'));
-  for (const u of users) {
-    sel.appendChild(option(u.protocol + ':' + u.username, protoLabel(u.protocol) + ' · ' + u.username));
-  }
-  sel.value = options.includes(prev) ? prev : 'all';
-}
-
-function buildHistFilters(users) {
-  const protoSel = document.getElementById('hist-protocol');
-  const prevProto = protoSel.value;
-  const protos = ['all'];
-  protoSel.innerHTML = '';
-  protoSel.appendChild(option('all', '全部协议'));
-  for (const u of users) {
-    if (!protos.includes(u.protocol)) {
-      protos.push(u.protocol);
-      protoSel.appendChild(option(u.protocol, protoLabel(u.protocol)));
-    }
-  }
-  protoSel.value = protos.includes(prevProto) ? prevProto : 'all';
-  buildHistUserOptions();
-}
-
-function buildHistUserOptions() {
-  const sel = document.getElementById('hist-user');
-  const prev = sel.value;
-  const proto = document.getElementById('hist-protocol').value;
-  const options = ['all'];
-  sel.innerHTML = '';
-  sel.appendChild(option('all', '全部用户'));
-  for (const u of allUsers) {
-    if (proto !== 'all' && u.protocol !== proto) continue;
-    const val = u.protocol + ':' + u.username;
-    options.push(val);
-    sel.appendChild(option(val, protoLabel(u.protocol) + ' · ' + u.username));
-  }
-  sel.value = options.includes(prev) ? prev : 'all';
-}
-
 function histRange() {
   const mode = document.getElementById('hist-range').value;
   const now = Math.floor(Date.now() / 1000);
@@ -218,16 +256,10 @@ function histRange() {
 let lastHistUsers = [];
 
 async function refreshHistory() {
-  const proto = document.getElementById('hist-protocol').value;
-  const user = document.getElementById('hist-user').value;
   const { start, end } = histRange();
   const qs = [`start=${start}`, `end=${end}`];
-  if (proto !== 'all') qs.push('protocol=' + encodeURIComponent(proto));
-  if (user !== 'all') {
-    const i = user.indexOf(':');
-    qs.push('protocol=' + encodeURIComponent(user.slice(0, i)));
-    qs.push('username=' + encodeURIComponent(user.slice(i + 1)));
-  }
+  for (const p of histProtocolMS.getValues()) qs.push('protocol=' + encodeURIComponent(p));
+  for (const u of histUserMS.getValues()) qs.push('username=' + encodeURIComponent(u));
   const data = await fetchJSON('api/history?' + qs.join('&'));
   document.getElementById('hist-up').textContent = fmtBytes(data.total_up);
   document.getElementById('hist-down').textContent = fmtBytes(data.total_down);
@@ -357,18 +389,11 @@ function drawHistoryChart(users) {
   el.appendChild(legend);
 }
 
-function option(value, text) {
-  const o = document.createElement('option');
-  o.value = value;
-  o.textContent = text;
-  return o;
-}
-
 function protoLabel(p) { return p === 'vmess' ? 'VMess' : (p === 'anytls' ? 'AnyTLS' : p); }
 
 async function refreshChart() {
   const hours = parseInt(document.getElementById('chart-hours').value, 10) || 24;
-  const selected = document.getElementById('chart-user').value;
+  const selected = chartUserMS.getValues();
   const data = await fetchJSON('api/traffic?hours=' + hours);
   const series = data.series || {};
 
@@ -382,15 +407,14 @@ async function refreshChart() {
   const idx = {};
   buckets.forEach((b, i) => { idx[b.hour] = i; });
 
-  if (selected === 'all') {
-    for (const key in series) {
-      for (const pt of series[key]) {
-        const i = idx[pt.hour];
-        if (i != null) { buckets[i].up += pt.uplink; buckets[i].down += pt.downlink; }
-      }
+  const selSet = new Set(selected);
+  const all = selected.length === 0;
+  for (const key in series) {
+    if (!all) {
+      const uname = key.slice(key.indexOf(':') + 1);
+      if (!selSet.has(uname)) continue;
     }
-  } else if (series[selected]) {
-    for (const pt of series[selected]) {
+    for (const pt of series[key]) {
       const i = idx[pt.hour];
       if (i != null) { buckets[i].up += pt.uplink; buckets[i].down += pt.downlink; }
     }
@@ -522,43 +546,20 @@ function escapeHtml(s) {
 
 async function bootstrap() {
   const ov = await fetchJSON('api/overview');
-  buildUserSelect(ov.users);
-  buildConnFilters(ov.users);
-  buildHistFilters(ov.users);
+  buildFilters(ov.users);
   await refreshOverview();
   await refreshConnections();
   await refreshChart();
   await refreshHistory();
 }
 
-document.getElementById('chart-user').addEventListener('change', refreshChart);
 document.getElementById('chart-hours').addEventListener('change', refreshChart);
-document.getElementById('conn-protocol').addEventListener('change', () => {
-  buildConnUserOptions();
-  connLimit = CONN_PAGE;
-  refreshConnections().catch(() => {});
-});
-document.getElementById('conn-user').addEventListener('change', () => {
-  connLimit = CONN_PAGE;
-  refreshConnections().catch(() => {});
-});
-document.getElementById('conn-status').addEventListener('change', () => {
-  connLimit = CONN_PAGE;
-  refreshConnections().catch(() => {});
-});
 document.getElementById('conn-more').addEventListener('click', () => {
   connLimit = Math.min(connLimit + CONN_PAGE, CONN_MAX);
   refreshConnections().catch(() => {});
 });
 document.getElementById('reset-all').addEventListener('click', () => {
   resetAll().catch(() => {});
-});
-document.getElementById('hist-protocol').addEventListener('change', () => {
-  buildHistUserOptions();
-  refreshHistory().catch(() => {});
-});
-document.getElementById('hist-user').addEventListener('change', () => {
-  refreshHistory().catch(() => {});
 });
 document.getElementById('hist-range').addEventListener('change', () => {
   document.getElementById('hist-custom').style.display =
@@ -569,6 +570,24 @@ document.getElementById('hist-from').addEventListener('change', () => {
   refreshHistory().catch(() => {});
 });
 document.getElementById('hist-to').addEventListener('change', () => {
+  refreshHistory().catch(() => {});
+});
+document.getElementById('clear-chart-filters').addEventListener('click', () => {
+  chartUserMS.clear();
+  refreshChart().catch(() => {});
+});
+document.getElementById('clear-conn-filters').addEventListener('click', () => {
+  connProtocolMS.clear();
+  connUserMS.clear();
+  connStatusMS.clear();
+  connLimit = CONN_PAGE;
+  refreshConnections().catch(() => {});
+});
+document.getElementById('clear-hist-filters').addEventListener('click', () => {
+  histProtocolMS.clear();
+  histUserMS.clear();
+  document.getElementById('hist-range').value = '7';
+  document.getElementById('hist-custom').style.display = 'none';
   refreshHistory().catch(() => {});
 });
 

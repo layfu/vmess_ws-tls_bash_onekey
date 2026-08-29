@@ -113,10 +113,10 @@ func (a *api) connections(w http.ResponseWriter, r *http.Request) {
 	if limit > 1000 {
 		limit = 1000
 	}
-	protocol := r.URL.Query().Get("protocol")
-	username := r.URL.Query().Get("username")
-	status := r.URL.Query().Get("status")
-	rows, err := a.store.connections(limit, protocol, username, status)
+	protocols := r.URL.Query()["protocol"]
+	usernames := r.URL.Query()["username"]
+	statuses := r.URL.Query()["status"]
+	rows, err := a.store.connections(limit, protocols, usernames, statuses)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -154,9 +154,9 @@ func (a *api) history(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	protocol := q.Get("protocol")
-	username := q.Get("username")
-	rows, err := a.store.hourlyRange(start, end, protocol, username)
+	protocols := q["protocol"]
+	usernames := q["username"]
+	rows, err := a.store.hourlyRange(start, end, protocols, usernames)
 	if err != nil {
 		writeErr(w, err)
 		return
