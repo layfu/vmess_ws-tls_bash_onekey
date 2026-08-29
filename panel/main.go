@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -11,9 +12,17 @@ import (
 	"time"
 )
 
+var version = "dev"
+
 func main() {
 	configPath := flag.String("c", "/etc/panel/config.json", "config file path")
+	showVersion := flag.Bool("v", false, "print version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println(version)
+		return
+	}
 
 	cfg, err := loadConfig(*configPath)
 	if err != nil {

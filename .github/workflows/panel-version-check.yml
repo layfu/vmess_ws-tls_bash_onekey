@@ -1,0 +1,44 @@
+name: Panel version check
+
+# 若本次提交改动了 panel/ 下的文件（不含 panel/VERSION 本身），
+# 但未同步 bump panel/VERSION，则构建失败，提醒手动递增面板版本。
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check panel/VERSION bump
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            BASE="origin/${{ github.base_ref }}"
+          else
+            BASE="${{ github.event.before }}"
+          fi
+
+          CHANGED=$(git diff --name-only "$BASE" HEAD -- panel/ | grep -v '^panel/VERSION$' || true)
+          if [ -z "$CHANGED" ]; then
+            echo "panel/ 无改动（或仅 panel/VERSION），跳过检查"
+            exit 0
+          fi
+
+          VERSION_CHANGED=$(git diff --name-only "$BASE" HEAD -- panel/VERSION)
+          if [ -z "$VERSION_CHANGED" ]; then
+            echo "错误：panel/ 下有改动但未 bump panel/VERSION："
+            echo "$CHANGED"
+            exit 1
+          fi
+
+          echo "panel/VERSION 已同步 bump，检查通过"

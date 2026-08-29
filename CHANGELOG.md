@@ -1,4 +1,6 @@
 ## 2026-08-29
+* 流量面板改用独立版本号（`panel/VERSION`，初始 1.0.0，仅面板代码变更时手动递增）；「升级 流量面板」菜单（第 8 项）新增版本比对，已是最新则跳过
+* 新增 CI 检查：改动 `panel/` 但未同步 bump `panel/VERSION` 时构建失败
 * 「更新 sing-box (v2ray_api)」菜单（第 9 项）新增版本检查：先比对当前版本与最新 Release 的 sing-box 版本，已是最新则跳过，不再每次重复下载
 * 新增自动重建机制：定时检查上游 sing-box 新版本并自动编译带 v2ray_api 的定制版（Release 正文记录 sing-box 版本号）
 * 修复定制 sing-box 未内嵌版本号（`version -n` 输出 unknown）导致升级菜单无法正确比对：构建时注入 `constant.Version`

@@ -57,7 +57,8 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           GOARM: ${{ matrix.goarm }}
         run: |
-          go build -trimpath -ldflags "-s -w" -o "panel-linux-${{ matrix.arch }}" .
+          VERSION=$(cat VERSION)
+          go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o "panel-linux-${{ matrix.arch }}" .
           sha256sum "panel-linux-${{ matrix.arch }}" > "panel-linux-${{ matrix.arch }}.sha256"
 
       - name: Upload artifacts
@@ -144,18 +145,22 @@ jobs:
     needs: [panel, singbox]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
 
-      - name: Detect built sing-box version
+      - name: Detect built versions
         run: |
-          TAG=$(git ls-remote --tags https://github.com/SagerNet/sing-box.git 'refs/tags/v*' \
+          SINGBOX_TAG=$(git ls-remote --tags https://github.com/SagerNet/sing-box.git 'refs/tags/v*' \
             | sed 's|.*refs/tags/||; s|\^{}||' \
             | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
-          echo "SINGBOX_TAG=${TAG}" >> "$GITHUB_ENV"
+          PANEL_VERSION=$(cat panel/VERSION)
+          echo "SINGBOX_TAG=${SINGBOX_TAG}" >> "$GITHUB_ENV"
+          echo "PANEL_VERSION=${PANEL_VERSION}" >> "$GITHUB_ENV"
 
       - name: Create release
         env:
@@ -164,4 +169,5 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" dist/* \
             --title "$GITHUB_REF_NAME" \
-            --notes "sing-box: ${SINGBOX_TAG}"
+            --notes "sing-box: ${SINGBOX_TAG}
+panel: ${PANEL_VERSION}"

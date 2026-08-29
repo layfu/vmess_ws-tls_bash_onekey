@@ -31,7 +31,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.9.7"
+shell_version="1.6.9.8"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -909,6 +909,37 @@ panel_update() {
         echo -e "${Error} ${RedBG} 面板未安装，请先安装 ${Font}"
         return 1
     fi
+
+    local current_ver
+    current_ver="$("${panel_bin_dir}" -v 2>/dev/null | head -n 1)"
+    [[ -n "${current_ver}" ]] && echo -e "${OK} ${GreenBG} 当前面板版本: ${current_ver} ${Font}"
+
+    local tmp_file latest_ver
+    tmp_file="$(mktemp)"
+    if curl -sS -H "Accept: application/vnd.github.v3+json" -o "$tmp_file" "https://api.github.com/repos/${panel_repo}/releases/latest"; then
+        latest_ver="$(sed 'y/,/\n/' "$tmp_file" | grep '"body"' | grep -oE 'panel: *[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 | awk '{print $NF}')"
+    fi
+    rm -f "$tmp_file"
+
+    if [[ -n "${latest_ver}" && -n "${current_ver}" && "${current_ver}" == "${latest_ver}" ]]; then
+        echo -e "${OK} ${GreenBG} 当前已是最新版本 ${latest_ver}，无需更新 ${Font}"
+        return 0
+    fi
+    if [[ -n "${latest_ver}" && -n "${current_ver}" ]]; then
+        echo -e "${OK} ${GreenBG} 发现新版本: ${latest_ver} (当前: ${current_ver}) ${Font}"
+    fi
+
+    local confirm=""
+    read -rp "是否下载最新流量面板并升级（默认 Y）? [Y/n]: " confirm
+    [[ -z "${confirm}" ]] && confirm="Y"
+    case "${confirm}" in
+    [yY][eE][sS] | [yY]) ;;
+    *)
+        echo -e "${OK} ${GreenBG} 已取消升级 ${Font}"
+        return 0
+        ;;
+    esac
+
     systemctl stop panel >/dev/null 2>&1
     if panel_download; then
         panel_config_gen
