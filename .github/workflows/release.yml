@@ -167,7 +167,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
+          NOTES="$(printf 'sing-box: %s\npanel: %s' "${SINGBOX_TAG}" "${PANEL_VERSION}")"
           gh release create "$GITHUB_REF_NAME" dist/* \
             --title "$GITHUB_REF_NAME" \
-            --notes "sing-box: ${SINGBOX_TAG}
-panel: ${PANEL_VERSION}"
+            --notes "${NOTES}"
