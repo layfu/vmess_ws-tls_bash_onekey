@@ -55,6 +55,75 @@ function statusBadge(s) {
   return `<span class="badge ${m.cls}">${m.label}</span>`;
 }
 
+// ---- 表格排序 ----
+const NUMERIC_SORT_KEYS = { uplink: 1, downlink: 1, total: 1, lifetime: 1, last_seen: 1 };
+
+let overviewSort = { key: 'total', dir: 'desc' };
+let histSort = { key: 'total', dir: 'desc' };
+
+function overviewSortVal(u, key) {
+  switch (key) {
+    case 'protocol': return u.protocol || '';
+    case 'username': return u.username || '';
+    case 'uplink': return u.uplink || 0;
+    case 'downlink': return u.downlink || 0;
+    case 'total': return u.total || 0;
+    case 'lifetime': return u.lifetime_total || 0;
+    case 'online': return u.online ? 1 : 0;
+    case 'last_seen': return u.last_seen || 0;
+    default: return 0;
+  }
+}
+
+function histSortVal(u, key) {
+  switch (key) {
+    case 'protocol': return u.protocol || '';
+    case 'username': return u.username || '';
+    case 'uplink': return u.uplink || 0;
+    case 'downlink': return u.downlink || 0;
+    case 'total': return (u.uplink || 0) + (u.downlink || 0);
+    default: return 0;
+  }
+}
+
+function sortRows(rows, getVal, sortState) {
+  const dirMult = sortState.dir === 'asc' ? 1 : -1;
+  return rows.slice().sort((a, b) => {
+    const va = getVal(a, sortState.key);
+    const vb = getVal(b, sortState.key);
+    let c;
+    if (typeof va === 'string' || typeof vb === 'string') {
+      c = String(va).localeCompare(String(vb), 'zh-CN');
+    } else {
+      c = va === vb ? 0 : (va > vb ? 1 : -1);
+    }
+    return c * dirMult;
+  });
+}
+
+function updateSortIndicators(tableId, sortState) {
+  document.querySelectorAll('#' + tableId + ' th.sortable').forEach((th) => {
+    const key = th.dataset.sort;
+    const arrow = th.querySelector('.sort-arrow');
+    if (arrow) arrow.textContent = key === sortState.key ? (sortState.dir === 'asc' ? '▲' : '▼') : '';
+  });
+}
+
+function setupSortable(tableId, sortState, onSort) {
+  document.querySelectorAll('#' + tableId + ' th.sortable').forEach((th) => {
+    th.addEventListener('click', () => {
+      const key = th.dataset.sort;
+      if (sortState.key === key) {
+        sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
+      } else {
+        sortState.key = key;
+        sortState.dir = NUMERIC_SORT_KEYS[key] ? 'desc' : 'asc';
+      }
+      onSort();
+    });
+  });
+}
+
 async function refreshOverview() {
   const data = await fetchJSON('api/overview');
   document.getElementById('total-up').textContent = fmtBytes(data.total_up);
@@ -63,7 +132,8 @@ async function refreshOverview() {
 
   const tbody = document.querySelector('#users-table tbody');
   tbody.innerHTML = '';
-  for (const u of data.users) {
+  const users = sortRows(data.users, overviewSortVal, overviewSort);
+  for (const u of users) {
     const tr = document.createElement('tr');
     tr.innerHTML =
       `<td>${protoBadge(u.protocol)}</td>` +
@@ -76,6 +146,7 @@ async function refreshOverview() {
       `<td class="mono">${fmtTime(u.last_seen)}</td>`;
     tbody.appendChild(tr);
   }
+  updateSortIndicators('users-table', overviewSort);
 }
 
 let allUsers = [];
@@ -266,7 +337,8 @@ async function refreshHistory() {
 
   const tbody = document.querySelector('#hist-table tbody');
   tbody.innerHTML = '';
-  for (const u of data.users || []) {
+  const users = sortRows(data.users || [], histSortVal, histSort);
+  for (const u of users) {
     const tr = document.createElement('tr');
     tr.innerHTML =
       `<td>${protoBadge(u.protocol)}</td>` +
@@ -276,7 +348,8 @@ async function refreshHistory() {
       `<td class="mono">${fmtBytes(u.uplink + u.downlink)}</td>`;
     tbody.appendChild(tr);
   }
-  lastHistUsers = data.users || [];
+  lastHistUsers = users;
+  updateSortIndicators('hist-table', histSort);
   drawHistoryChart(lastHistUsers);
 }
 
@@ -579,6 +652,9 @@ document.getElementById('clear-hist-filters').addEventListener('click', () => {
   document.getElementById('hist-custom').style.display = 'none';
   refreshHistory().catch(() => {});
 });
+
+setupSortable('users-table', overviewSort, () => { refreshOverview().catch(() => {}); });
+setupSortable('hist-table', histSort, () => { refreshHistory().catch(() => {}); });
 
 let resizeTimer;
 window.addEventListener('resize', () => {
