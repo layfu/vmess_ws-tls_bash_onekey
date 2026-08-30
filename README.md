@@ -1,6 +1,6 @@
 # V2Ray vmess+ws+tls 一键安装脚本
 
-fork 自 [wulabing/V2Ray_ws-tls_bash_onekey](https://github.com/wulabing/V2Ray_ws-tls_bash_onekey)，适配新版系统并持续维护。
+本项目最初衍生自 [wulabing/V2Ray_ws-tls_bash_onekey](https://github.com/wulabing/V2Ray_ws-tls_bash_onekey)，由衷感谢原作者的卓越贡献。
 
 ### 系统要求
 
