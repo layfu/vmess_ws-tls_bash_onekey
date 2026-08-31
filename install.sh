@@ -1107,6 +1107,7 @@ anytls_user_menu() {
         return 1
     fi
     while true; do
+        clear_screen
         echo -e "\t AnyTLS 用户管理"
         echo -e "${Green}1.${Font} 查看用户列表"
         echo -e "${Green}2.${Font} 添加用户"
@@ -1118,6 +1119,7 @@ anytls_user_menu() {
         case ${user_menu_num} in
         1)
             anytls_user_list
+            pause_continue
             ;;
         2)
             anytls_user_add
@@ -1382,6 +1384,7 @@ anytls_block_ip_del() {
 
 anytls_block_domain_menu() {
     while true; do
+        clear_screen
         echo -e "\t 禁止自定义域名"
         echo -e "${Green}1.${Font} 查看屏蔽域名列表"
         echo -e "${Green}2.${Font} 添加屏蔽域名"
@@ -1391,6 +1394,7 @@ anytls_block_domain_menu() {
         case ${bd_num} in
         1)
             anytls_block_domain_list
+            pause_continue
             ;;
         2)
             anytls_block_domain_add
@@ -1410,6 +1414,7 @@ anytls_block_domain_menu() {
 
 anytls_block_ip_menu() {
     while true; do
+        clear_screen
         echo -e "\t 禁止自定义 IP"
         echo -e "${Green}1.${Font} 查看屏蔽 IP 列表"
         echo -e "${Green}2.${Font} 添加屏蔽 IP"
@@ -1419,6 +1424,7 @@ anytls_block_ip_menu() {
         case ${bi_num} in
         1)
             anytls_block_ip_list
+            pause_continue
             ;;
         2)
             anytls_block_ip_add
@@ -1480,6 +1486,7 @@ anytls_warp_user_del() {
 
 anytls_warp_user_menu() {
     while true; do
+        clear_screen
         echo -e "\t 管理 AnyTLS WARP 用户"
         echo -e "${Green}1.${Font} 查看 WARP 用户列表"
         echo -e "${Green}2.${Font} 添加 WARP 用户"
@@ -1489,6 +1496,7 @@ anytls_warp_user_menu() {
         case ${wu_num} in
         1)
             anytls_warp_user_list
+            pause_continue
             ;;
         2)
             anytls_warp_user_add
@@ -1512,6 +1520,7 @@ anytls_routing_menu() {
         return 1
     fi
     while true; do
+        clear_screen
         anytls_routing_load
         local cn_s="关" ads_s="关" bt_s="关" warp_s="off(直连)"
         [[ "${anytls_block_cn}" == "1" ]] && cn_s="开"
@@ -2060,6 +2069,7 @@ vmess_user_menu() {
         return 1
     fi
     while true; do
+        clear_screen
         echo -e "\t VMess 用户管理"
         echo -e "${Green}1.${Font} 查看用户列表"
         echo -e "${Green}2.${Font} 添加用户"
@@ -2071,6 +2081,7 @@ vmess_user_menu() {
         case ${user_menu_num} in
         1)
             vmess_user_list
+            pause_continue
             ;;
         2)
             vmess_user_add
@@ -2285,6 +2296,7 @@ block_ip_del() {
 
 block_domain_menu() {
     while true; do
+        clear_screen
         echo -e "\t 禁止自定义域名"
         echo -e "${Green}1.${Font} 查看屏蔽域名列表"
         echo -e "${Green}2.${Font} 添加屏蔽域名"
@@ -2294,6 +2306,7 @@ block_domain_menu() {
         case ${bd_num} in
         1)
             block_domain_list
+            pause_continue
             ;;
         2)
             block_domain_add
@@ -2313,6 +2326,7 @@ block_domain_menu() {
 
 block_ip_menu() {
     while true; do
+        clear_screen
         echo -e "\t 禁止自定义 IP"
         echo -e "${Green}1.${Font} 查看屏蔽 IP 列表"
         echo -e "${Green}2.${Font} 添加屏蔽 IP"
@@ -2322,6 +2336,7 @@ block_ip_menu() {
         case ${bi_num} in
         1)
             block_ip_list
+            pause_continue
             ;;
         2)
             block_ip_add
@@ -2383,6 +2398,7 @@ warp_user_del() {
 
 warp_user_menu() {
     while true; do
+        clear_screen
         echo -e "\t 管理 WARP 用户"
         echo -e "${Green}1.${Font} 查看 WARP 用户列表"
         echo -e "${Green}2.${Font} 添加 WARP 用户"
@@ -2392,6 +2408,7 @@ warp_user_menu() {
         case ${wu_num} in
         1)
             warp_user_list
+            pause_continue
             ;;
         2)
             warp_user_add
@@ -2415,6 +2432,7 @@ routing_menu() {
         return 1
     fi
     while true; do
+        clear_screen
         routing_load
         local cn_s="关" ads_s="关" bt_s="关" warp_s="off(直连)"
         [[ "${block_cn}" == "1" ]] && cn_s="开"
@@ -3252,6 +3270,7 @@ warp_watchdog_uninstall() {
 }
 warp_menu() {
     while true; do
+        clear_screen
         section_title "WARP"
         echo -e "${Green}1.${Font} 安装 WARP"
         echo -e "${Green}2.${Font} 卸载 WARP"
@@ -3268,6 +3287,7 @@ warp_menu() {
             ;;
         3)
             warp_status
+            pause_continue
             ;;
         4)
             if [[ -f "${warp_systemd_timer}" ]]; then
@@ -3753,9 +3773,18 @@ show_header() {
     echo -e "V2Ray / AnyTLS 安装管理脚本 ${Red}[${shell_version}]${Font}   当前已安装: ${mode_display}\n"
 }
 
+clear_screen() {
+    printf '\033[2J\033[H'
+}
+
+pause_continue() {
+    read -rp "按回车键返回菜单"
+}
+
 menu() {
     update_sh
     while true; do
+        clear_screen
         show_header
         echo -e "${Green}1.${Font} 安装与升级"
         echo -e "${Green}2.${Font} V2Ray 配置"
@@ -3796,6 +3825,7 @@ menu() {
 
 install_menu() {
     while true; do
+        clear_screen
         section_title "安装与升级"
         echo -e "${Green}1.${Font} 安装 V2Ray (Nginx+ws+tls)"
         echo -e "${Green}2.${Font} 升级 V2Ray"
@@ -3849,6 +3879,7 @@ install_menu() {
 
 v2ray_config_menu() {
     while true; do
+        clear_screen
         section_title "V2Ray 配置"
         echo -e "${Green}1.${Font} 管理 VMess 用户"
         echo -e "${Green}2.${Font} 变更 端口"
@@ -3891,6 +3922,7 @@ v2ray_config_menu() {
 
 anytls_config_menu() {
     while true; do
+        clear_screen
         section_title "AnyTLS 配置"
         echo -e "${Green}1.${Font} 管理 AnyTLS 用户"
         echo -e "${Green}2.${Font} 变更 AnyTLS 端口"
@@ -3919,6 +3951,7 @@ anytls_config_menu() {
 
 view_menu() {
     while true; do
+        clear_screen
         section_title "查看信息"
         echo -e "${Green}1.${Font} 查看 V2Ray 配置信息"
         echo -e "${Green}2.${Font} 查看 AnyTLS 配置信息"
@@ -3930,9 +3963,11 @@ view_menu() {
         case ${sub_num} in
         1)
             v2ray_config_output
+            pause_continue
             ;;
         2)
             surge_config_output
+            pause_continue
             ;;
         3)
             show_access_log
@@ -3955,6 +3990,7 @@ view_menu() {
 
 cert_menu() {
     while true; do
+        clear_screen
         section_title "证书"
         echo -e "${Green}1.${Font} 证书 有效期更新"
         echo -e "${Green}2.${Font} 更新 证书crontab计划任务"
@@ -3985,6 +4021,7 @@ cert_menu() {
 
 other_menu() {
     while true; do
+        clear_screen
         section_title "其他"
         echo -e "${Green}1.${Font} 卸载"
         echo -e "${Green}2.${Font} 更新 geoip.dat 和 geosite.dat"
