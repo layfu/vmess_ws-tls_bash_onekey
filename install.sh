@@ -22,7 +22,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.9.14"
+shell_version="1.6.9.15"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -3174,9 +3174,13 @@ install_anytls() {
 }
 update_sh() {
     ol_version=$(curl -L -s -H 'Cache-Control: no-cache' "https://raw.githubusercontent.com/layfu/vmess_ws-tls_bash_onekey/${github_branch}/install.sh?t=$(date +%s)" | grep "shell_version=" | head -1 | awk -F '=|"' '{print $3}')
+    if [[ -z "${ol_version}" ]]; then
+        echo -e "${Error} ${RedBG} 获取远程版本失败，跳过更新检查 ${Font}"
+        return 0
+    fi
     echo "$ol_version" >$version_cmp
     echo "$shell_version" >>$version_cmp
-    if [[ "$shell_version" < "$(sort -rV $version_cmp | head -1)" ]]; then
+    if [[ "$shell_version" != "$(sort -rV $version_cmp | head -1)" ]]; then
         echo -e "${OK} ${GreenBG} 存在新版本，是否更新 [Y/N]? ${Font}"
         read -r update_confirm
         case $update_confirm in
