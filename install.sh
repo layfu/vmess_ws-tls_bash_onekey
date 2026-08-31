@@ -22,7 +22,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.9.11"
+shell_version="1.6.9.13"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -541,6 +541,20 @@ singbox_update() {
         return 1
     fi
 
+    if singbox_has_v2ray_api; then
+        echo -e "${Red} 检测到当前内核为带 v2ray_api 的定制版 sing-box。${Font}"
+        echo -e "${Red} 「升级 sing-box」将替换为官方版（不含 v2ray_api），会导致 AnyTLS 每用户流量统计失效，且现有配置可能无法启动。${Font}"
+        read -rp "是否改用「更新 sing-box (v2ray_api)」? [Y/n]: " confirm
+        [[ -z "${confirm}" ]] && confirm="Y"
+        case "${confirm}" in
+        [yY][eE][sS] | [yY])
+            singbox_v2rayapi_update
+            ;;
+        *) ;;
+        esac
+        return 0
+    fi
+
     local current_ver
     current_ver="$(${singbox_bin_dir} version -n 2>/dev/null | head -n 1)"
     echo -e "${OK} ${GreenBG} 当前 sing-box 版本: ${current_ver} ${Font}"
@@ -660,7 +674,12 @@ singbox_v2rayapi_ensure() {
 singbox_v2rayapi_update() {
     [[ -f "${singbox_conf}" ]] || { echo -e "${Error} ${RedBG} AnyTLS 未安装，无需更新 ${Font}"; return 0; }
     if ! singbox_has_v2ray_api; then
-        echo -e "${Red} 当前 sing-box 非 v2ray_api 定制构建。可先在「安装 流量面板」时自动下载，或手动替换。 ${Font}"
+        singbox_v2rayapi_ensure
+        if singbox_has_v2ray_api; then
+            anytls_conf_add
+            systemctl restart sing-box >/dev/null 2>&1
+            judge "sing-box (v2ray_api) 替换"
+        fi
         return 0
     fi
 
