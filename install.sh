@@ -1,14 +1,5 @@
 #!/bin/bash
 
-#====================================================
-#	System Request:Debian 11+/Ubuntu 20.04+/Centos 7+
-#	Author:	wulabing
-#	Dscription: V2ray ws+tls onekey Management
-#	Version: 1.0
-#	email:admin@wulabing.com
-#	Official document: www.v2ray.com
-#====================================================
-
 PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
 export PATH
 
@@ -1850,7 +1841,7 @@ ssl_install() {
 }
 
 domain_check() {
-    read -rp "请输入你的域名信息(eg:www.wulabing.com):" domain
+    read -rp "请输入你的域名信息(eg:www.example.com):" domain
     domain_ipv4="$(dig +short "${domain}" a)"
     domain_ipv6="$(dig +short "${domain}" aaaa)"
     echo -e "${OK} ${GreenBG} 正在获取 公网ip 信息，请耐心等待 ${Font}"
