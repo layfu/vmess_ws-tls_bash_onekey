@@ -22,7 +22,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.9.10"
+shell_version="1.6.9.11"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -1104,6 +1104,7 @@ anytls_user_rename() {
 anytls_user_menu() {
     if [[ ! -f "${singbox_conf}" ]]; then
         echo -e "${Error} ${RedBG} AnyTLS 未安装，请先安装 ${Font}"
+        pause_continue
         return 1
     fi
     while true; do
@@ -1119,7 +1120,6 @@ anytls_user_menu() {
         case ${user_menu_num} in
         1)
             anytls_user_list
-            pause_continue
             ;;
         2)
             anytls_user_add
@@ -1140,6 +1140,7 @@ anytls_user_menu() {
             echo -e "${RedBG}请输入正确的数字${Font}"
             ;;
         esac
+        pause_continue
     done
 }
 
@@ -1394,7 +1395,6 @@ anytls_block_domain_menu() {
         case ${bd_num} in
         1)
             anytls_block_domain_list
-            pause_continue
             ;;
         2)
             anytls_block_domain_add
@@ -1409,6 +1409,7 @@ anytls_block_domain_menu() {
             echo -e "${RedBG}请输入正确的数字${Font}"
             ;;
         esac
+        pause_continue
     done
 }
 
@@ -1424,7 +1425,6 @@ anytls_block_ip_menu() {
         case ${bi_num} in
         1)
             anytls_block_ip_list
-            pause_continue
             ;;
         2)
             anytls_block_ip_add
@@ -1439,6 +1439,7 @@ anytls_block_ip_menu() {
             echo -e "${RedBG}请输入正确的数字${Font}"
             ;;
         esac
+        pause_continue
     done
 }
 
@@ -1496,7 +1497,6 @@ anytls_warp_user_menu() {
         case ${wu_num} in
         1)
             anytls_warp_user_list
-            pause_continue
             ;;
         2)
             anytls_warp_user_add
@@ -1511,12 +1511,14 @@ anytls_warp_user_menu() {
             echo -e "${RedBG}请输入正确的数字${Font}"
             ;;
         esac
+        pause_continue
     done
 }
 
 anytls_routing_menu() {
     if [[ ! -f "${singbox_conf}" ]]; then
         echo -e "${Error} ${RedBG} AnyTLS 未安装，请先安装 ${Font}"
+        pause_continue
         return 1
     fi
     while true; do
@@ -1562,9 +1564,11 @@ anytls_routing_menu() {
             ;;
         4)
             anytls_block_domain_menu
+            continue
             ;;
         5)
             anytls_block_ip_menu
+            continue
             ;;
         6)
             case "${anytls_warp_mode}" in
@@ -1582,6 +1586,7 @@ anytls_routing_menu() {
             ;;
         7)
             anytls_warp_user_menu
+            continue
             ;;
         0)
             break
@@ -1590,6 +1595,7 @@ anytls_routing_menu() {
             echo -e "${RedBG}请输入正确的数字${Font}"
             ;;
         esac
+        pause_continue
     done
 }
 
@@ -2066,6 +2072,7 @@ vmess_user_rename() {
 vmess_user_menu() {
     if [[ ! -f ${v2ray_qr_config_file} ]]; then
         echo -e "${Error} ${RedBG} V2Ray 未安装，请先安装 ${Font}"
+        pause_continue
         return 1
     fi
     while true; do
@@ -2081,7 +2088,6 @@ vmess_user_menu() {
         case ${user_menu_num} in
         1)
             vmess_user_list
-            pause_continue
             ;;
         2)
             vmess_user_add
@@ -2102,6 +2108,7 @@ vmess_user_menu() {
             echo -e "${RedBG}请输入正确的数字${Font}"
             ;;
         esac
+        pause_continue
     done
 }
 
@@ -2306,7 +2313,6 @@ block_domain_menu() {
         case ${bd_num} in
         1)
             block_domain_list
-            pause_continue
             ;;
         2)
             block_domain_add
@@ -2321,6 +2327,7 @@ block_domain_menu() {
             echo -e "${RedBG}请输入正确的数字${Font}"
             ;;
         esac
+        pause_continue
     done
 }
 
@@ -2336,7 +2343,6 @@ block_ip_menu() {
         case ${bi_num} in
         1)
             block_ip_list
-            pause_continue
             ;;
         2)
             block_ip_add
@@ -2351,6 +2357,7 @@ block_ip_menu() {
             echo -e "${RedBG}请输入正确的数字${Font}"
             ;;
         esac
+        pause_continue
     done
 }
 
@@ -2408,7 +2415,6 @@ warp_user_menu() {
         case ${wu_num} in
         1)
             warp_user_list
-            pause_continue
             ;;
         2)
             warp_user_add
@@ -2423,12 +2429,14 @@ warp_user_menu() {
             echo -e "${RedBG}请输入正确的数字${Font}"
             ;;
         esac
+        pause_continue
     done
 }
 
 routing_menu() {
     if [[ ! -f ${v2ray_qr_config_file} ]]; then
         echo -e "${Error} ${RedBG} V2Ray 未安装，请先安装 ${Font}"
+        pause_continue
         return 1
     fi
     while true; do
@@ -2474,9 +2482,11 @@ routing_menu() {
             ;;
         4)
             block_domain_menu
+            continue
             ;;
         5)
             block_ip_menu
+            continue
             ;;
         6)
             case "${warp_mode}" in
@@ -2494,6 +2504,7 @@ routing_menu() {
             ;;
         7)
             warp_user_menu
+            continue
             ;;
         0)
             break
@@ -2502,6 +2513,7 @@ routing_menu() {
             echo -e "${RedBG}请输入正确的数字${Font}"
             ;;
         esac
+        pause_continue
     done
 }
 
@@ -3287,7 +3299,6 @@ warp_menu() {
             ;;
         3)
             warp_status
-            pause_continue
             ;;
         4)
             if [[ -f "${warp_systemd_timer}" ]]; then
@@ -3305,6 +3316,7 @@ warp_menu() {
             echo -e "${RedBG}请输入正确的数字${Font}"
             ;;
         esac
+        pause_continue
     done
 }
 list() {
@@ -3797,21 +3809,27 @@ menu() {
         case ${menu_num} in
         1)
             install_menu
+            continue
             ;;
         2)
             v2ray_config_menu
+            continue
             ;;
         3)
             anytls_config_menu
+            continue
             ;;
         4)
             view_menu
+            continue
             ;;
         5)
             cert_menu
+            continue
             ;;
         6)
             other_menu
+            continue
             ;;
         0)
             exit 0
@@ -3820,6 +3838,7 @@ menu() {
             echo -e "${RedBG}请输入正确的数字${Font}"
             ;;
         esac
+        pause_continue
     done
 }
 
@@ -3857,6 +3876,7 @@ install_menu() {
             ;;
         6)
             warp_menu
+            continue
             ;;
         7)
             panel_install
@@ -3874,6 +3894,7 @@ install_menu() {
             echo -e "${RedBG}请输入正确的数字${Font}"
             ;;
         esac
+        pause_continue
     done
 }
 
@@ -3891,6 +3912,7 @@ v2ray_config_menu() {
         case ${sub_num} in
         1)
             vmess_user_menu
+            continue
             ;;
         2)
             read -rp "请输入连接端口:" port
@@ -3909,6 +3931,7 @@ v2ray_config_menu() {
             ;;
         5)
             routing_menu
+            continue
             ;;
         0)
             break
@@ -3917,6 +3940,7 @@ v2ray_config_menu() {
             echo -e "${RedBG}请输入正确的数字${Font}"
             ;;
         esac
+        pause_continue
     done
 }
 
@@ -3932,12 +3956,14 @@ anytls_config_menu() {
         case ${sub_num} in
         1)
             anytls_user_menu
+            continue
             ;;
         2)
             anytls_port_change
             ;;
         3)
             anytls_routing_menu
+            continue
             ;;
         0)
             break
@@ -3946,6 +3972,7 @@ anytls_config_menu() {
             echo -e "${RedBG}请输入正确的数字${Font}"
             ;;
         esac
+        pause_continue
     done
 }
 
@@ -3963,11 +3990,9 @@ view_menu() {
         case ${sub_num} in
         1)
             v2ray_config_output
-            pause_continue
             ;;
         2)
             surge_config_output
-            pause_continue
             ;;
         3)
             show_access_log
@@ -3985,6 +4010,7 @@ view_menu() {
             echo -e "${RedBG}请输入正确的数字${Font}"
             ;;
         esac
+        pause_continue
     done
 }
 
@@ -4016,6 +4042,7 @@ cert_menu() {
             echo -e "${RedBG}请输入正确的数字${Font}"
             ;;
         esac
+        pause_continue
     done
 }
 
@@ -4059,6 +4086,7 @@ other_menu() {
             echo -e "${RedBG}请输入正确的数字${Font}"
             ;;
         esac
+        pause_continue
     done
 }
 
