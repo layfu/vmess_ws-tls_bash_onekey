@@ -22,7 +22,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.9.13"
+shell_version="1.6.9.14"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -544,13 +544,15 @@ singbox_update() {
     if singbox_has_v2ray_api; then
         echo -e "${Red} 检测到当前内核为带 v2ray_api 的定制版 sing-box。${Font}"
         echo -e "${Red} 「升级 sing-box」将替换为官方版（不含 v2ray_api），会导致 AnyTLS 每用户流量统计失效，且现有配置可能无法启动。${Font}"
-        read -rp "是否改用「更新 sing-box (v2ray_api)」? [Y/n]: " confirm
+        read -rp "是否改用「更新 sing-box (v2ray_api)」继续更新?（输入 n 取消本次升级）[Y/n]: " confirm
         [[ -z "${confirm}" ]] && confirm="Y"
         case "${confirm}" in
         [yY][eE][sS] | [yY])
             singbox_v2rayapi_update
             ;;
-        *) ;;
+        *)
+            echo -e "${OK} ${GreenBG} 已取消，本次未做任何更改 ${Font}"
+            ;;
         esac
         return 0
     fi
