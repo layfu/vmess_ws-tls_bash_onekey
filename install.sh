@@ -3157,6 +3157,10 @@ judge_mode() {
 }
 install_v2ray_ws_tls() {
     is_root
+    if { [[ -f "${v2ray_bin_dir}" ]] || [[ -f "${v2ray_bin_dir_old}/v2ray" ]]; } && grep -q "ws" "${v2ray_qr_config_file}" 2>/dev/null; then
+        echo -e "${Error} ${RedBG} 已安装 V2Ray (vmess+ws+tls)，拒绝重复安装 ${Font}"
+        return 1
+    fi
     check_system
     chrony_install
     dependency_install
@@ -3190,6 +3194,10 @@ install_v2ray_ws_tls() {
 }
 install_anytls() {
     is_root
+    if [[ -f "${singbox_conf}" ]]; then
+        echo -e "${Error} ${RedBG} 已安装 AnyTLS (sing-box)，拒绝重复安装 ${Font}"
+        return 1
+    fi
     check_system
     dependency_install
     basic_optimization
