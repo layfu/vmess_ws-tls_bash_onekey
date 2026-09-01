@@ -609,6 +609,136 @@ function escapeHtml(s) {
   }[c]));
 }
 
+// ---- 用户配置页 ----
+let allConfigs = [];
+let configsLoaded = false;
+let configSearch = '';
+let configProto = '';
+
+function configSecretLabel(c) {
+  return c.secret_label || (c.protocol === 'vmess' ? 'UUID' : '密码');
+}
+
+function configText(c) {
+  const lines = [];
+  lines.push('协议: ' + protoLabel(c.protocol));
+  lines.push('用户: ' + c.username);
+  if (c.address) lines.push('地址: ' + c.address);
+  if (c.port) lines.push('端口: ' + c.port);
+  lines.push(configSecretLabel(c) + ': ' + c.secret);
+  if (c.path) lines.push('路径: ' + c.path);
+  if (c.sni) lines.push('SNI: ' + c.sni);
+  if (c.link) lines.push('导入链接: ' + c.link);
+  if (c.surge) lines.push('Surge: ' + c.surge);
+  return lines.join('\n');
+}
+
+function copyText(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text);
+  }
+  return new Promise((resolve, reject) => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); resolve(); }
+    catch (e) { reject(e); }
+    document.body.removeChild(ta);
+  });
+}
+
+function toast(msg) {
+  let t = document.getElementById('toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'toast';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove('show'), 1600);
+}
+
+function visibleConfigs() {
+  const q = configSearch.trim().toLowerCase();
+  return allConfigs.filter((c) => {
+    if (configProto && c.protocol !== configProto) return false;
+    if (q && c.username.toLowerCase().indexOf(q) < 0) return false;
+    return true;
+  });
+}
+
+function configKV(label, value) {
+  if (value == null || value === '') return '';
+  return '<div class="config-kv"><span class="config-k">' + label + '</span>' +
+    '<span class="config-v mono">' + escapeHtml(value) + '</span></div>';
+}
+
+function configCard(c) {
+  const card = document.createElement('div');
+  card.className = 'config-card';
+  card.innerHTML =
+    '<div class="config-card-head">' +
+      '<span>' + protoBadge(c.protocol) + ' <span class="config-user">' + escapeHtml(c.username) + '</span></span>' +
+      '<button class="btn copy-btn">复制</button>' +
+    '</div>' +
+    '<div class="config-card-body">' +
+      configKV('地址', c.address) +
+      configKV('端口', c.port) +
+      configKV(configSecretLabel(c), c.secret) +
+      configKV('路径', c.path) +
+      configKV('SNI', c.sni) +
+    '</div>' +
+    (c.link ? '<div class="config-link mono" title="' + escapeHtml(c.link) + '">' + escapeHtml(c.link) + '</div>' : '');
+  card.querySelector('.copy-btn').addEventListener('click', () => {
+    copyText(configText(c)).then(() => toast('已复制 ' + c.username + ' 配置')).catch(() => toast('复制失败'));
+  });
+  return card;
+}
+
+function renderConfigs() {
+  const container = document.getElementById('config-groups');
+  const list = visibleConfigs();
+  container.innerHTML = '';
+  if (!list.length) {
+    container.innerHTML = '<div class="empty">无匹配用户</div>';
+    return;
+  }
+  const protos = [...new Set(list.map((c) => c.protocol))];
+  for (const p of protos) {
+    const users = list.filter((c) => c.protocol === p);
+    const group = document.createElement('div');
+    group.className = 'config-group';
+    const head = document.createElement('div');
+    head.className = 'config-group-head';
+    head.innerHTML = protoBadge(p) + ' <span class="config-group-count">' + users.length + ' 个用户</span>';
+    group.appendChild(head);
+    const grid = document.createElement('div');
+    grid.className = 'config-grid';
+    for (const c of users) grid.appendChild(configCard(c));
+    group.appendChild(grid);
+    container.appendChild(group);
+  }
+}
+
+async function refreshConfigs() {
+  const data = await fetchJSON('api/configs');
+  allConfigs = data.configs || [];
+  configsLoaded = true;
+  renderConfigs();
+}
+
+function showPage(page) {
+  document.getElementById('page-dashboard').hidden = page !== 'dashboard';
+  document.getElementById('page-configs').hidden = page !== 'configs';
+  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.page === page));
+  if (page === 'configs' && !configsLoaded) refreshConfigs().catch(() => {});
+}
+
 async function bootstrap() {
   const ov = await fetchJSON('api/overview');
   buildFilters(ov.users);
@@ -655,6 +785,24 @@ document.getElementById('clear-hist-filters').addEventListener('click', () => {
 
 setupSortable('users-table', overviewSort, () => { refreshOverview().catch(() => {}); });
 setupSortable('hist-table', histSort, () => { refreshHistory().catch(() => {}); });
+
+document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => showPage(t.dataset.page)));
+document.getElementById('config-refresh').addEventListener('click', () => { refreshConfigs().catch(() => {}); });
+document.getElementById('config-copy-all').addEventListener('click', () => {
+  const list = visibleConfigs();
+  const text = list.map(configText).join('\n\n');
+  if (!text) { toast('无匹配用户'); return; }
+  copyText(text).then(() => toast('已复制 ' + list.length + ' 个用户配置')).catch(() => toast('复制失败'));
+});
+document.getElementById('config-search').addEventListener('input', (e) => {
+  configSearch = e.target.value;
+  renderConfigs();
+});
+document.querySelectorAll('#config-proto .seg-btn').forEach((b) => b.addEventListener('click', () => {
+  configProto = b.dataset.proto;
+  document.querySelectorAll('#config-proto .seg-btn').forEach((x) => x.classList.toggle('active', x === b));
+  renderConfigs();
+}));
 
 let resizeTimer;
 window.addEventListener('resize', () => {

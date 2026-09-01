@@ -208,6 +208,10 @@ func (a *api) history(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (a *api) configs(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]any{"configs": loadAllConfigs(a.cfg)})
+}
+
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(v)

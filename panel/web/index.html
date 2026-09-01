@@ -16,7 +16,13 @@
   </div>
 </header>
 
+<nav class="tabs">
+  <button class="tab active" data-page="dashboard">仪表盘</button>
+  <button class="tab" data-page="configs">配置</button>
+</nav>
+
 <main>
+<div id="page-dashboard">
   <section>
     <h2>当月流量 <span class="hint">上行/下行/总量为当月流量，累计为终身总量</span>
     </h2>
@@ -120,6 +126,24 @@
       </table>
     </div>
   </section>
+</div>
+
+<div id="page-configs" hidden>
+  <section>
+    <h2>用户配置 <span class="hint">数据实时读取自服务端配置，随实际配置变更</span></h2>
+    <div class="filters">
+      <input type="text" id="config-search" placeholder="搜索用户名">
+      <div class="seg" id="config-proto">
+        <button class="seg-btn active" data-proto="">全部</button>
+        <button class="seg-btn" data-proto="vmess">VMess</button>
+        <button class="seg-btn" data-proto="anytls">AnyTLS</button>
+      </div>
+      <button id="config-refresh" class="btn ghost">刷新</button>
+      <button id="config-copy-all" class="btn">复制全部</button>
+    </div>
+    <div id="config-groups"></div>
+  </section>
+</div>
 </main>
 
 <footer>数据每 15 秒自动刷新 · 面板仅监听本机，经 Nginx 反代访问</footer>

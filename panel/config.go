@@ -12,6 +12,9 @@ type ProtocolConfig struct {
 	WSAccessLog string `json:"ws_access_log"`
 	LogFile     string `json:"log_file"`
 	UsersFile   string `json:"users_file"`
+	ConfigFile  string `json:"config_file"`
+	QrFile      string `json:"qr_file"`
+	DomainFile  string `json:"domain_file"`
 }
 
 type Config struct {
@@ -38,12 +41,16 @@ func defaultConfig() *Config {
 			AccessLog:   "/var/log/v2ray/access.log",
 			WSAccessLog: "/var/log/nginx/ws-access.log",
 			UsersFile:   "/etc/v2ray/users",
+			ConfigFile:  "/etc/v2ray/config.json",
+			QrFile:      "/usr/local/vmess_qr.json",
 		},
 		SingBox: ProtocolConfig{
-			Enabled:   false,
-			APIAddr:   "127.0.0.1:50086",
-			LogFile:   "/var/log/sing-box/sing-box.log",
-			UsersFile: "/etc/sing-box/users",
+			Enabled:    false,
+			APIAddr:    "127.0.0.1:50086",
+			LogFile:    "/var/log/sing-box/sing-box.log",
+			UsersFile:  "/etc/sing-box/users",
+			ConfigFile: "/etc/sing-box/config.json",
+			DomainFile: "/etc/sing-box/domain",
 		},
 	}
 }

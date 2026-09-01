@@ -804,13 +804,17 @@ panel_config_gen() {
     "api_addr": "127.0.0.1:${panel_v2ray_api_port}",
     "access_log": "/var/log/v2ray/access.log",
     "ws_access_log": "${nginx_ws_access_log}",
-    "users_file": "/etc/v2ray/users"
+    "users_file": "/etc/v2ray/users",
+    "config_file": "/etc/v2ray/config.json",
+    "qr_file": "${v2ray_qr_config_file}"
   },
   "singbox": {
     "enabled": ${singbox_enabled},
     "api_addr": "127.0.0.1:${panel_singbox_api_port}",
     "log_file": "${singbox_log_file}",
-    "users_file": "/etc/sing-box/users"
+    "users_file": "/etc/sing-box/users",
+    "config_file": "/etc/sing-box/config.json",
+    "domain_file": "${anytls_domain_file}"
   }
 }
 EOF
