@@ -22,7 +22,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.9.19"
+shell_version="1.6.9.20"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -923,9 +923,11 @@ EOF
 }
 
 panel_install() {
-    if ! panel_installed; then
-        panel_download || return 1
+    if panel_installed; then
+        echo -e "${Error} ${RedBG} 已安装 流量面板，拒绝重复安装 ${Font}"
+        return 1
     fi
+    panel_download || return 1
     panel_config_gen
     panel_geo_download
     if [[ ! -f "${panel_auth_file}" ]]; then
@@ -3259,9 +3261,8 @@ warp_install() {
         return 1
     fi
     if warp_installed; then
-        echo -e "${OK} ${GreenBG} WARP 已安装 ${Font}"
-        warp_status
-        return 0
+        echo -e "${Error} ${RedBG} 已安装 WARP，拒绝重复安装 ${Font}"
+        return 1
     fi
     command -v curl >/dev/null 2>&1 || apt-get install -y -qq curl >/dev/null
     apt-get install -y -qq gnupg >/dev/null
