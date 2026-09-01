@@ -789,7 +789,15 @@ setupSortable('users-table', overviewSort, () => { refreshOverview().catch(() =>
 setupSortable('hist-table', histSort, () => { refreshHistory().catch(() => {}); });
 
 document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => showPage(t.dataset.page)));
-document.getElementById('config-refresh').addEventListener('click', () => { refreshConfigs().catch(() => {}); });
+document.getElementById('config-refresh').addEventListener('click', () => {
+  const btn = document.getElementById('config-refresh');
+  btn.disabled = true;
+  btn.textContent = '刷新中…';
+  refreshConfigs()
+    .then(() => toast('已刷新 · ' + allConfigs.length + ' 个用户'))
+    .catch(() => toast('刷新失败'))
+    .finally(() => { btn.disabled = false; btn.textContent = '刷新'; });
+});
 document.getElementById('config-copy-all').addEventListener('click', () => {
   const list = visibleConfigs();
   const text = list.map(configText).join('\n\n');
