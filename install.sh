@@ -22,7 +22,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.9.16"
+shell_version="1.6.9.17"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -771,6 +771,18 @@ panel_geo_download() {
     install -m 644 "${tmp_dir}/ip2region_v4.xdb" "${panel_geo_db}"
     rm -rf "${tmp_dir}"
     judge "IP 归属地数据库安装"
+    return 0
+}
+
+panel_geo_update() {
+    if ! panel_installed; then
+        echo -e "${Error} ${RedBG} 面板未安装，无需更新 ${Font}"
+        return 0
+    fi
+    if panel_geo_download; then
+        systemctl restart panel >/dev/null 2>&1
+        judge "面板重启加载 IP 归属地数据库"
+    fi
     return 0
 }
 
@@ -4102,6 +4114,7 @@ other_menu() {
         echo -e "${Green}3.${Font} 更新 sing-box 规则集"
         echo -e "${Green}4.${Font} 升级 脚本"
         echo -e "${Green}5.${Font} 修改 面板密码"
+        echo -e "${Green}6.${Font} 更新 IP 归属地数据库"
         echo -e "${Green}0.${Font} 返回上级菜单 \n"
         read -rp "请输入数字：" sub_num
         case ${sub_num} in
@@ -4125,6 +4138,9 @@ other_menu() {
             else
                 echo -e "${Error} ${RedBG} 面板未安装 ${Font}"
             fi
+            ;;
+        6)
+            panel_geo_update
             ;;
         0)
             break
