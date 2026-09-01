@@ -736,6 +736,8 @@ function showPage(page) {
   document.getElementById('page-dashboard').hidden = page !== 'dashboard';
   document.getElementById('page-configs').hidden = page !== 'configs';
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.page === page));
+  document.getElementById('footer-note').textContent =
+    page === 'configs' ? '配置数据按需读取，点击「刷新」获取最新' : '数据每 15 秒自动刷新';
   if (page === 'configs' && !configsLoaded) refreshConfigs().catch(() => {});
 }
 
