@@ -63,7 +63,7 @@ func main() {
 		}
 	}()
 
-	a := &api{store: st, cfg: cfg, onlineWin: int64(cfg.OnlineWindowSec)}
+	a := &api{store: st, cfg: cfg, onlineWin: int64(cfg.OnlineWindowSec), geo: newGeoLookup(cfg.GeoDB)}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/overview", a.overview)

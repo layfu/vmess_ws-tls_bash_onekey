@@ -22,7 +22,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.9.15"
+shell_version="1.6.9.16"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -80,6 +80,7 @@ panel_auth_file="/etc/panel/panel.htpasswd"
 panel_listen_addr="127.0.0.1:2052"
 panel_v2ray_api_port="50085"
 panel_singbox_api_port="50086"
+panel_geo_db="/etc/panel/ip2region_v4.xdb"
 singbox_log_file="/var/log/sing-box/sing-box.log"
 nginx_ws_access_log="/var/log/nginx/ws-access.log"
 panel_repo="layfu/vmess_ws-tls_bash_onekey"
@@ -755,6 +756,24 @@ panel_download() {
     return 0
 }
 
+panel_geo_download() {
+    local tmp_dir
+    tmp_dir="$(mktemp -d)"
+    local url="https://raw.githubusercontent.com/lionsoul2014/ip2region/master/data/ip2region_v4.xdb"
+    echo -e "${OK} ${GreenBG} 正在下载 IP 归属地数据库 (ip2region) ... ${Font}"
+    if ! curl -L -q --retry 3 --retry-delay 5 --retry-max-time 120 -o "${tmp_dir}/ip2region_v4.xdb" "${url}"; then
+        echo -e "${Error} ${RedBG} IP 归属地数据库下载失败: ${url} ${Font}"
+        echo -e "${Red} 面板「最近连接」的来源 IP 将不显示归属地（不影响其他功能） ${Font}"
+        rm -rf "${tmp_dir}"
+        return 1
+    fi
+    mkdir -p "$(dirname "${panel_geo_db}")"
+    install -m 644 "${tmp_dir}/ip2region_v4.xdb" "${panel_geo_db}"
+    rm -rf "${tmp_dir}"
+    judge "IP 归属地数据库安装"
+    return 0
+}
+
 panel_config_gen() {
     mkdir -p "${panel_conf_dir}" "${panel_db_dir}"
     local v2ray_enabled="false" singbox_enabled="false"
@@ -767,6 +786,7 @@ panel_config_gen() {
   "poll_interval_sec": 15,
   "online_window_sec": 90,
   "retention_days": 1095,
+  "geo_db": "${panel_geo_db}",
   "v2ray": {
     "enabled": ${v2ray_enabled},
     "api_addr": "127.0.0.1:${panel_v2ray_api_port}",
@@ -891,6 +911,7 @@ panel_install() {
         panel_download || return 1
     fi
     panel_config_gen
+    panel_geo_download
     if [[ ! -f "${panel_auth_file}" ]]; then
         panel_auth_set
     fi
@@ -955,6 +976,7 @@ panel_update() {
     systemctl stop panel >/dev/null 2>&1
     if panel_download; then
         panel_config_gen
+        panel_geo_download
         nginx_ws_access_log_add
         singbox_v2rayapi_ensure
         [[ -f "${v2ray_conf}" ]] && v2ray_conf_add

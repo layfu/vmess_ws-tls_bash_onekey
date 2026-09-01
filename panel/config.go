@@ -20,6 +20,7 @@ type Config struct {
 	PollIntervalSec int            `json:"poll_interval_sec"`
 	OnlineWindowSec int            `json:"online_window_sec"`
 	RetentionDays   int            `json:"retention_days"`
+	GeoDB           string         `json:"geo_db"`
 	V2Ray           ProtocolConfig `json:"v2ray"`
 	SingBox         ProtocolConfig `json:"singbox"`
 }

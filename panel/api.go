@@ -12,6 +12,7 @@ type api struct {
 	store     *store
 	cfg       *Config
 	onlineWin int64
+	geo       *geoLookup
 }
 
 type userInfo struct {
@@ -103,12 +104,13 @@ func (a *api) traffic(w http.ResponseWriter, r *http.Request) {
 }
 
 type connInfo struct {
-	TS       int64  `json:"ts"`
-	Protocol string `json:"protocol"`
-	Username string `json:"username"`
-	Source   string `json:"source"`
-	Target   string `json:"target"`
-	Status   string `json:"status"`
+	TS        int64  `json:"ts"`
+	Protocol  string `json:"protocol"`
+	Username  string `json:"username"`
+	Source    string `json:"source"`
+	SourceGeo string `json:"source_geo"`
+	Target    string `json:"target"`
+	Status    string `json:"status"`
 }
 
 func (a *api) connections(w http.ResponseWriter, r *http.Request) {
@@ -129,7 +131,11 @@ func (a *api) connections(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]connInfo, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, connInfo{TS: r.TS, Protocol: r.Protocol, Username: r.Username, Source: r.Source, Target: r.Target, Status: r.Status})
+		ci := connInfo{TS: r.TS, Protocol: r.Protocol, Username: r.Username, Source: r.Source, Target: r.Target, Status: r.Status}
+		if a.geo != nil {
+			ci.SourceGeo = a.geo.lookup(r.Source)
+		}
+		out = append(out, ci)
 	}
 	writeJSON(w, map[string]any{"connections": out})
 }

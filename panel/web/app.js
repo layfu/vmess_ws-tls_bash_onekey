@@ -293,7 +293,7 @@ async function refreshConnections() {
       `<td>${protoBadge(c.protocol)}</td>` +
       `<td>${escapeHtml(c.username) || '—'}</td>` +
       `<td>${statusBadge(c.status)}</td>` +
-      `<td class="mono">${escapeHtml(c.source) || '—'}</td>` +
+      `<td class="mono">${escapeHtml(c.source) || '—'}${c.source_geo ? ' <span class="geo">[' + escapeHtml(c.source_geo) + ']</span>' : ''}</td>` +
       `<td class="mono">${escapeHtml(c.target)}</td>`;
     tbody.appendChild(tr);
   }
