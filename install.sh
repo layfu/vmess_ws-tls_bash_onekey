@@ -22,7 +22,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.9.20"
+shell_version="1.6.9.21"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -1017,6 +1017,7 @@ panel_update() {
         [[ -f "${singbox_systemd_file}" ]] && systemctl restart sing-box >/dev/null 2>&1
         systemctl start panel >/dev/null 2>&1
         judge "面板升级"
+        sed -i '/auth_basic/d' "${nginx_conf}"
         systemctl restart nginx >/dev/null 2>&1
     else
         systemctl start panel >/dev/null 2>&1
