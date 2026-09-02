@@ -22,7 +22,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.9.21"
+shell_version="1.6.9.22"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -974,6 +974,13 @@ panel_update() {
         return 1
     fi
 
+    # 清理旧版 Nginx 遗留的 basic auth（幂等，面板鉴权已改由面板自实现）
+    if [[ -f "${nginx_conf}" ]] && grep -q 'auth_basic' "${nginx_conf}"; then
+        sed -i '/auth_basic/d' "${nginx_conf}"
+        systemctl restart nginx >/dev/null 2>&1
+        echo -e "${OK} ${GreenBG} 已移除 Nginx 旧鉴权配置 ${Font}"
+    fi
+
     local current_ver
     current_ver="$("${panel_bin_dir}" -v 2>/dev/null | head -n 1)"
     [[ -n "${current_ver}" ]] && echo -e "${OK} ${GreenBG} 当前面板版本: ${current_ver} ${Font}"
@@ -1017,7 +1024,6 @@ panel_update() {
         [[ -f "${singbox_systemd_file}" ]] && systemctl restart sing-box >/dev/null 2>&1
         systemctl start panel >/dev/null 2>&1
         judge "面板升级"
-        sed -i '/auth_basic/d' "${nginx_conf}"
         systemctl restart nginx >/dev/null 2>&1
     else
         systemctl start panel >/dev/null 2>&1
