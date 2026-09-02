@@ -214,6 +214,46 @@ func TestMiddlewareGuards(t *testing.T) {
 	}
 }
 
+func TestLoginPageRedirectWhenAuthed(t *testing.T) {
+	dir := t.TempDir()
+	authFile := filepath.Join(dir, "panel.htpasswd")
+	secretFile := filepath.Join(dir, "panel.key")
+	if err := writeTestFile(authFile, "admin:"+apr1Crypt("pw", "s")+"\n"); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &Config{
+		AuthFile:          authFile,
+		SessionSecretFile: secretFile,
+		SessionTTLSec:     3600,
+		LoginMaxFails:     5,
+		LoginLockSec:      1800,
+	}
+	a, err := newAuthenticator(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// unauthenticated -> login page (200)
+	rr := httptest.NewRecorder()
+	a.loginPage(rr, httptest.NewRequest(http.MethodGet, "/login", nil))
+	if rr.Code != http.StatusOK {
+		t.Errorf("unauthenticated login page should be 200, got %d", rr.Code)
+	}
+
+	// authenticated -> redirect to panel root
+	tok := a.issue()
+	rr = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/login", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: tok})
+	a.loginPage(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Errorf("authenticated login page should redirect 302, got %d", rr.Code)
+	}
+	if loc := rr.Header().Get("Location"); loc != "./" {
+		t.Errorf("redirect location = %q, want ./", loc)
+	}
+}
+
 func writeTestFile(path, content string) error {
 	return os.WriteFile(path, []byte(content), 0644)
 }

@@ -228,6 +228,17 @@ func isPublicPath(path string) bool {
 	return path == "/login" || path == "/api/login" || path == "/api/logout"
 }
 
+// loginPage serves the login form, or redirects back to the panel root when the
+// request already carries a valid session.
+func (a *authenticator) loginPage(w http.ResponseWriter, r *http.Request) {
+	if a.authenticated(r) {
+		w.Header().Set("Location", "./")
+		w.WriteHeader(http.StatusFound)
+		return
+	}
+	serveLoginPage(w, r)
+}
+
 func wantsJSON(r *http.Request) bool {
 	return strings.Contains(r.Header.Get("Accept"), "application/json")
 }

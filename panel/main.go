@@ -71,7 +71,7 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/login", serveLoginPage)
+	mux.HandleFunc("/login", auth.loginPage)
 	mux.HandleFunc("/api/login", auth.login)
 	mux.HandleFunc("/api/logout", auth.logout)
 	mux.HandleFunc("/api/overview", a.overview)
