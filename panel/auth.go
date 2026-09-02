@@ -244,7 +244,9 @@ func (a *authenticator) middleware(next http.Handler) http.Handler {
 			writeJSONStatus(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 			return
 		}
-		http.Redirect(w, r, "/login", http.StatusFound)
+		// 相对路径重定向，避免经 Nginx 反代时跳转到域名根（如 /login 而非 /panel/login）
+		w.Header().Set("Location", "login")
+		w.WriteHeader(http.StatusFound)
 	})
 }
 

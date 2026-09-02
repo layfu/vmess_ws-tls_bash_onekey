@@ -209,8 +209,8 @@ func TestMiddlewareGuards(t *testing.T) {
 	if rr.Code != http.StatusFound {
 		t.Errorf("html without auth should redirect 302, got %d", rr.Code)
 	}
-	if loc := rr.Header().Get("Location"); loc != "/login" {
-		t.Errorf("redirect location = %q, want /login", loc)
+	if loc := rr.Header().Get("Location"); loc != "login" {
+		t.Errorf("redirect location = %q, want login", loc)
 	}
 }
 
