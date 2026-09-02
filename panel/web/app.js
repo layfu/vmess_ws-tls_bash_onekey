@@ -34,6 +34,10 @@ function fmtClockLabel(hour) {
 
 async function fetchJSON(url) {
   const res = await fetch(url, { cache: 'no-store' });
+  if (res.status === 401) {
+    window.location.replace('login');
+    throw new Error('unauthorized');
+  }
   if (!res.ok) throw new Error(res.statusText);
   return res.json();
 }
@@ -807,6 +811,10 @@ document.getElementById('config-copy-all').addEventListener('click', () => {
 document.getElementById('config-search').addEventListener('input', (e) => {
   configSearch = e.target.value;
   renderConfigs();
+});
+document.getElementById('logout-btn').addEventListener('click', async () => {
+  try { await fetch('api/logout', { method: 'POST', cache: 'no-store' }); } catch (_) {}
+  window.location.replace('login');
 });
 document.querySelectorAll('#config-proto .seg-btn').forEach((b) => b.addEventListener('click', () => {
   configProto = b.dataset.proto;

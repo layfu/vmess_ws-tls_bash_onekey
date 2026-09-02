@@ -36,6 +36,8 @@ header h1 { font-size: 18px; margin: 0; }
 .stat .label { color: var(--muted); font-size: 12px; }
 .stat .value { font-size: 18px; font-weight: 600; margin-top: 2px; }
 
+.header-right { display: flex; align-items: center; gap: 20px; }
+
 .filters {
   display: flex;
   flex-wrap: wrap;

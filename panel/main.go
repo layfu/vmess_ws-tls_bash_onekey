@@ -65,7 +65,15 @@ func main() {
 
 	a := &api{store: st, cfg: cfg, onlineWin: int64(cfg.OnlineWindowSec), geo: newGeoLookup(cfg.GeoDB)}
 
+	auth, err := newAuthenticator(cfg)
+	if err != nil {
+		log.Fatalf("auth: %v", err)
+	}
+
 	mux := http.NewServeMux()
+	mux.HandleFunc("/login", serveLoginPage)
+	mux.HandleFunc("/api/login", auth.login)
+	mux.HandleFunc("/api/logout", auth.logout)
 	mux.HandleFunc("/api/overview", a.overview)
 	mux.HandleFunc("/api/traffic", a.traffic)
 	mux.HandleFunc("/api/connections", a.connections)
@@ -76,7 +84,7 @@ func main() {
 	})
 	mux.Handle("/", webHandler())
 
-	srv := &http.Server{Addr: cfg.Listen, Handler: mux}
+	srv := &http.Server{Addr: cfg.Listen, Handler: auth.middleware(mux)}
 	go func() {
 		log.Printf("panel listening on %s", cfg.Listen)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

@@ -77,6 +77,7 @@ panel_db_dir="/var/lib/panel"
 panel_db="${panel_db_dir}/panel.db"
 panel_systemd_file="/etc/systemd/system/panel.service"
 panel_auth_file="/etc/panel/panel.htpasswd"
+panel_session_key="/etc/panel/panel.key"
 panel_listen_addr="127.0.0.1:2052"
 panel_v2ray_api_port="50085"
 panel_singbox_api_port="50086"
@@ -799,6 +800,11 @@ panel_config_gen() {
   "online_window_sec": 90,
   "retention_days": 1095,
   "geo_db": "${panel_geo_db}",
+  "auth_file": "${panel_auth_file}",
+  "session_secret_file": "${panel_session_key}",
+  "session_ttl_sec": 604800,
+  "login_max_fails": 5,
+  "login_lock_sec": 1800,
   "v2ray": {
     "enabled": ${v2ray_enabled},
     "api_addr": "127.0.0.1:${panel_v2ray_api_port}",
@@ -842,6 +848,14 @@ panel_auth_set() {
     echo -e "${Red} 请妥善保存上述密码 ${Font}"
 }
 
+panel_session_secret_ensure() {
+    if [[ ! -f "${panel_session_key}" ]]; then
+        mkdir -p "${panel_conf_dir}"
+        head -c 32 /dev/urandom | base64 >"${panel_session_key}"
+        chmod 600 "${panel_session_key}"
+    fi
+}
+
 panel_nginx_location_add() {
     [[ -f "${nginx_conf}" ]] || return 0
     grep -q 'location /panel/' "${nginx_conf}" && return 0
@@ -850,8 +864,6 @@ panel_nginx_location_add() {
     cat >"${tmpfile}" <<EOF
         location = /panel { return 301 /panel/; }
         location /panel/ {
-            auth_basic "Panel";
-            auth_basic_user_file ${panel_auth_file};
             proxy_pass http://${panel_listen_addr}/;
             proxy_http_version 1.1;
             proxy_set_header Host \$host;
@@ -930,6 +942,7 @@ panel_install() {
     panel_download || return 1
     panel_config_gen
     panel_geo_download
+    panel_session_secret_ensure
     if [[ ! -f "${panel_auth_file}" ]]; then
         panel_auth_set
     fi
@@ -995,6 +1008,7 @@ panel_update() {
     if panel_download; then
         panel_config_gen
         panel_geo_download
+        panel_session_secret_ensure
         nginx_ws_access_log_add
         singbox_v2rayapi_ensure
         [[ -f "${v2ray_conf}" ]] && v2ray_conf_add
@@ -4147,7 +4161,8 @@ other_menu() {
         5)
             if panel_installed; then
                 panel_auth_set
-                systemctl restart nginx >/dev/null 2>&1
+                panel_session_secret_ensure
+                systemctl restart panel >/dev/null 2>&1
             else
                 echo -e "${Error} ${RedBG} 面板未安装 ${Font}"
             fi
