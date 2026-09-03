@@ -500,6 +500,60 @@ function pickLabelStep(count, bw) {
   return 48;
 }
 
+// monotoneSmooth 用 Fritsch–Carlson 单调三次插值把等间距点连成平滑曲线，
+// 生成不包含起点的 C 贝塞尔段，避免峰值处过冲。
+function monotoneSmooth(points) {
+  const n = points.length;
+  if (n < 2) return '';
+  const xs = points.map((p) => p.x);
+  const ys = points.map((p) => p.y);
+  const dx = new Array(n - 1), dy = new Array(n - 1), m = new Array(n - 1);
+  for (let i = 0; i < n - 1; i++) {
+    dx[i] = xs[i + 1] - xs[i];
+    dy[i] = ys[i + 1] - ys[i];
+    m[i] = dy[i] / dx[i];
+  }
+  const t = new Array(n);
+  t[0] = m[0];
+  t[n - 1] = m[n - 2];
+  for (let i = 1; i < n - 1; i++) t[i] = (m[i - 1] + m[i]) / 2;
+  for (let i = 1; i < n - 1; i++) if (m[i - 1] * m[i] <= 0) t[i] = 0;
+  for (let i = 0; i < n - 1; i++) {
+    if (dy[i] === 0) {
+      t[i] = 0;
+      t[i + 1] = 0;
+    } else {
+      const a = t[i] / m[i];
+      const b = t[i + 1] / m[i];
+      const s = a * a + b * b;
+      if (s > 9) {
+        const k = 3 / Math.sqrt(s);
+        t[i] = k * a * m[i];
+        t[i + 1] = k * b * m[i];
+      }
+    }
+  }
+  let d = '';
+  for (let i = 0; i < n - 1; i++) {
+    const x1 = xs[i] + dx[i] / 3;
+    const y1 = ys[i] + t[i] * dx[i] / 3;
+    const x2 = xs[i + 1] - dx[i] / 3;
+    const y2 = ys[i + 1] - t[i + 1] * dx[i] / 3;
+    d += ` C ${x1} ${y1}, ${x2} ${y2}, ${xs[i + 1]} ${ys[i + 1]}`;
+  }
+  return d;
+}
+
+function linePath(points) {
+  if (!points.length) return '';
+  return `M ${points[0].x} ${points[0].y}` + monotoneSmooth(points);
+}
+
+function areaPath(topPts, bottomPts) {
+  if (!topPts.length) return '';
+  return linePath(topPts) + linePath([...bottomPts].reverse()).replace(/^M/, 'L') + ' Z';
+}
+
 function drawChart(buckets) {
   const el = document.getElementById('chart');
   el.innerHTML = '';
@@ -535,13 +589,54 @@ function drawChart(buckets) {
     svg.appendChild(axisText(svgNS, fmtBytes(val), margin.left - 6, y + 3, 'end'));
   }
 
-  // 柱状图
-  for (let i = 0; i < buckets.length; i++) {
-    const b = buckets[i];
-    const x = margin.left + i * bw;
-    const y = margin.top + plotH - ((b.up + b.down) / max) * plotH;
-    if (b.up > 0) svg.appendChild(rect(svgNS, x + 1, y, Math.max(bw - 2, 1), (b.up / max) * plotH, '#38d39f'));
-    if (b.down > 0) svg.appendChild(rect(svgNS, x + 1, y + (b.up / max) * plotH, Math.max(bw - 2, 1), (b.down / max) * plotH, '#5aa2ff'));
+  // 平滑堆叠面积图（上行在底部=绿，下行堆在上方=蓝）
+  const xs = buckets.map((_, i) => barCenter(i));
+  const y0 = margin.top + plotH;
+  const yUp = buckets.map((b) => y0 - (b.up / max) * plotH);
+  const yDown = buckets.map((b) => y0 - ((b.up + b.down) / max) * plotH);
+  const upPts = xs.map((x, i) => ({ x, y: yUp[i] }));
+  const downPts = xs.map((x, i) => ({ x, y: yDown[i] }));
+  const basePts = xs.map((x) => ({ x, y: y0 }));
+
+  const areaUp = document.createElementNS(svgNS, 'path');
+  areaUp.setAttribute('d', areaPath(upPts, basePts));
+  areaUp.setAttribute('fill', '#38d39f');
+  areaUp.setAttribute('fill-opacity', '0.85');
+  svg.appendChild(areaUp);
+
+  const areaDown = document.createElementNS(svgNS, 'path');
+  areaDown.setAttribute('d', areaPath(downPts, upPts));
+  areaDown.setAttribute('fill', '#5aa2ff');
+  areaDown.setAttribute('fill-opacity', '0.85');
+  svg.appendChild(areaDown);
+
+  const lineUp = document.createElementNS(svgNS, 'path');
+  lineUp.setAttribute('d', linePath(upPts));
+  lineUp.setAttribute('fill', 'none');
+  lineUp.setAttribute('stroke', '#38d39f');
+  lineUp.setAttribute('stroke-width', '1.5');
+  lineUp.setAttribute('stroke-linejoin', 'round');
+  svg.appendChild(lineUp);
+
+  const lineDown = document.createElementNS(svgNS, 'path');
+  lineDown.setAttribute('d', linePath(downPts));
+  lineDown.setAttribute('fill', 'none');
+  lineDown.setAttribute('stroke', '#5aa2ff');
+  lineDown.setAttribute('stroke-width', '1.5');
+  lineDown.setAttribute('stroke-linejoin', 'round');
+  svg.appendChild(lineDown);
+
+  if (buckets.length <= 24) {
+    for (let i = 0; i < buckets.length; i++) {
+      const upDot = document.createElementNS(svgNS, 'circle');
+      upDot.setAttribute('cx', xs[i]); upDot.setAttribute('cy', yUp[i]); upDot.setAttribute('r', '2.5');
+      upDot.setAttribute('fill', '#38d39f');
+      svg.appendChild(upDot);
+      const downDot = document.createElementNS(svgNS, 'circle');
+      downDot.setAttribute('cx', xs[i]); downDot.setAttribute('cy', yDown[i]); downDot.setAttribute('r', '2.5');
+      downDot.setAttribute('fill', '#5aa2ff');
+      svg.appendChild(downDot);
+    }
   }
 
   // 悬停引导线
