@@ -12,7 +12,7 @@ cd "$(
 Green="\033[32m"
 Red="\033[31m"
 # Yellow="\033[33m"
-GreenBG="\033[48;5;22m"
+GreenBG="\033[48;5;28m"
 RedBG="\033[41;37m"
 Font="\033[0m"
 
