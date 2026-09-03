@@ -492,6 +492,14 @@ async function refreshChart() {
   drawChart(buckets);
 }
 
+function pickLabelStep(count, bw) {
+  if (count <= 24) return 1;
+  const minStep = Math.ceil(46 / bw);
+  const candidates = [1, 2, 3, 4, 6, 8, 12, 24];
+  for (const c of candidates) if (c >= minStep) return c;
+  return 48;
+}
+
 function drawChart(buckets) {
   const el = document.getElementById('chart');
   el.innerHTML = '';
@@ -500,10 +508,12 @@ function drawChart(buckets) {
   const svgNS = 'http://www.w3.org/2000/svg';
   const width = Math.max(el.clientWidth - 16, 420);
   const height = 264;
-  const margin = { top: 6, right: 6, bottom: 38, left: 56 };
+  const margin = { top: 6, right: 6, bottom: 44, left: 56 };
   const plotW = width - margin.left - margin.right;
   const plotH = height - margin.top - margin.bottom;
   const bw = plotW / buckets.length;
+  const barCenter = (i) => margin.left + i * bw + bw / 2;
+  const hourOf = (i) => new Date(buckets[i].hour * 1000).getHours();
 
   const svg = document.createElementNS(svgNS, 'svg');
   svg.setAttribute('width', width);
@@ -528,30 +538,63 @@ function drawChart(buckets) {
   // 柱状图
   for (let i = 0; i < buckets.length; i++) {
     const b = buckets[i];
-    const total = b.up + b.down;
-    const h = (total / max) * plotH;
     const x = margin.left + i * bw;
-    const y = margin.top + plotH - h;
-    const tip = `${fmtHourLabel(b.hour)}  上行 ${fmtBytes(b.up)}  下行 ${fmtBytes(b.down)}`;
-    if (b.up > 0) {
-      const r = rect(svgNS, x + 1, y, Math.max(bw - 2, 1), (b.up / max) * plotH, '#38d39f');
-      r.appendChild(titleEl(svgNS, tip));
-      svg.appendChild(r);
-    }
-    if (b.down > 0) {
-      const r = rect(svgNS, x + 1, y + (b.up / max) * plotH, Math.max(bw - 2, 1), (b.down / max) * plotH, '#5aa2ff');
-      r.appendChild(titleEl(svgNS, tip));
-      svg.appendChild(r);
-    }
+    const y = margin.top + plotH - ((b.up + b.down) / max) * plotH;
+    if (b.up > 0) svg.appendChild(rect(svgNS, x + 1, y, Math.max(bw - 2, 1), (b.up / max) * plotH, '#38d39f'));
+    if (b.down > 0) svg.appendChild(rect(svgNS, x + 1, y + (b.up / max) * plotH, Math.max(bw - 2, 1), (b.down / max) * plotH, '#5aa2ff'));
   }
 
-  // X 轴：两行时间标签（日期/小时），按柱宽自适应密度，小窗口下避免重叠与裁剪
-  const labelW = 42;
-  const labelEvery = Math.max(1, Math.ceil(labelW / bw));
-  for (let i = 0; i < buckets.length; i += labelEvery) {
-    const x = margin.left + i * bw + bw / 2;
-    if (x - labelW / 2 < 0 || x + labelW / 2 > width) continue;
-    svg.appendChild(axisText2(svgNS, fmtDayLabel(buckets[i].hour), fmtClockLabel(buckets[i].hour), x, margin.top + plotH + 14));
+  // 悬停引导线
+  const guide = document.createElementNS(svgNS, 'line');
+  guide.setAttribute('y1', margin.top);
+  guide.setAttribute('y2', margin.top + plotH);
+  guide.setAttribute('stroke', '#38d39f');
+  guide.setAttribute('stroke-width', '1');
+  guide.setAttribute('stroke-dasharray', '3 3');
+  guide.setAttribute('pointer-events', 'none');
+  guide.setAttribute('visibility', 'hidden');
+  svg.appendChild(guide);
+
+  // X 轴：刻度线 + 标签（对齐整点）
+  const step = pickLabelStep(buckets.length, bw);
+  const labeled = [];
+  for (let i = 0; i < buckets.length; i++) {
+    if (hourOf(i) % step === 0) labeled.push(i);
+  }
+  if (!labeled.includes(buckets.length - 1)) labeled.push(buckets.length - 1);
+
+  const tickY = margin.top + plotH;
+  for (const i of labeled) {
+    const x = barCenter(i);
+    const t = document.createElementNS(svgNS, 'line');
+    t.setAttribute('x1', x); t.setAttribute('y1', tickY);
+    t.setAttribute('x2', x); t.setAttribute('y2', tickY + 5);
+    t.setAttribute('stroke', '#8a97a8');
+    t.setAttribute('stroke-width', '1');
+    svg.appendChild(t);
+  }
+
+  if (step === 1) {
+    // 24h：逐小时旋转标注，午夜处额外标注日期
+    for (let i = 0; i < buckets.length; i++) {
+      const x = barCenter(i);
+      const rt = document.createElementNS(svgNS, 'text');
+      rt.setAttribute('x', x);
+      rt.setAttribute('y', tickY + 10);
+      rt.setAttribute('text-anchor', 'end');
+      rt.setAttribute('class', 'axis');
+      rt.setAttribute('transform', `rotate(-45 ${x} ${tickY + 10})`);
+      rt.textContent = fmtClockLabel(buckets[i].hour);
+      svg.appendChild(rt);
+      if (hourOf(i) === 0) {
+        svg.appendChild(axisText(svgNS, fmtDayLabel(buckets[i].hour), x, tickY + 26, 'middle'));
+      }
+    }
+  } else {
+    for (const i of labeled) {
+      const x = barCenter(i);
+      svg.appendChild(axisText2(svgNS, fmtDayLabel(buckets[i].hour), fmtClockLabel(buckets[i].hour), x, tickY + 14));
+    }
   }
 
   const legend = document.createElement('div');
@@ -561,6 +604,45 @@ function drawChart(buckets) {
   legend.innerHTML = '<span style="color:#38d39f">■</span> 上行 &nbsp; <span style="color:#5aa2ff">■</span> 下行';
   el.appendChild(svg);
   el.appendChild(legend);
+
+  // 悬停提示浮层
+  const tooltip = document.createElement('div');
+  tooltip.className = 'chart-tooltip';
+  tooltip.style.display = 'none';
+  el.appendChild(tooltip);
+
+  const setTip = (i) => {
+    if (i == null || i < 0 || i >= buckets.length) {
+      tooltip.style.display = 'none';
+      guide.setAttribute('visibility', 'hidden');
+      return;
+    }
+    const b = buckets[i];
+    guide.setAttribute('x1', barCenter(i));
+    guide.setAttribute('x2', barCenter(i));
+    guide.setAttribute('visibility', 'visible');
+    tooltip.innerHTML =
+      `<div>${fmtHourLabel(b.hour)}</div>` +
+      `<div style="color:#38d39f">上行 ${fmtBytes(b.up)}</div>` +
+      `<div style="color:#5aa2ff">下行 ${fmtBytes(b.down)}</div>` +
+      `<div>总计 ${fmtBytes(b.up + b.down)}</div>`;
+    tooltip.style.display = 'block';
+  };
+
+  svg.addEventListener('mousemove', (e) => {
+    const sRect = svg.getBoundingClientRect();
+    const i = Math.floor((e.clientX - sRect.left - margin.left) / bw);
+    setTip(i);
+    const eRect = el.getBoundingClientRect();
+    let tx = e.clientX - eRect.left + 14;
+    let ty = e.clientY - eRect.top + 14;
+    tooltip.style.left = tx + 'px';
+    tooltip.style.top = ty + 'px';
+    const tRect = tooltip.getBoundingClientRect();
+    if (tx + tRect.width > eRect.width) tooltip.style.left = (tx - tRect.width - 28) + 'px';
+    if (ty + tRect.height > eRect.height) tooltip.style.top = (ty - tRect.height - 28) + 'px';
+  });
+  svg.addEventListener('mouseleave', () => setTip(null));
 }
 
 function axisText(svgNS, content, x, y, anchor) {

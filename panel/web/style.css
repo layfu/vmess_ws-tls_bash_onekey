@@ -119,9 +119,24 @@ tbody tr:hover { background: rgba(255,255,255,0.02); }
 
 .geo { color: var(--muted); font-size: 12px; }
 
-#chart { height: 306px; border: 1px solid var(--border); border-radius: 8px; padding: 8px; overflow-x: auto; overflow-y: hidden; }
+#chart { position: relative; height: 306px; border: 1px solid var(--border); border-radius: 8px; padding: 8px; overflow-x: auto; overflow-y: hidden; }
 
 .axis { fill: var(--muted); font-size: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+.chart-tooltip {
+  position: absolute;
+  z-index: 10;
+  pointer-events: none;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
 
 select {
   background: var(--panel);
