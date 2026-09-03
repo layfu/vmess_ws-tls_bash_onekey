@@ -1,11 +1,19 @@
 package main
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
+	"math/big"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestVMessLink(t *testing.T) {
@@ -77,6 +85,9 @@ func TestLoadVmessConfigs(t *testing.T) {
 	if cfgs[0].SecretLabel != "UUID" {
 		t.Errorf("secret label = %q", cfgs[0].SecretLabel)
 	}
+	if cfgs[0].Transport != "websocket" || cfgs[0].TLS != "是" || cfgs[0].AEAD != "是" {
+		t.Errorf("vmess transport/tls/aead = %q/%q/%q", cfgs[0].Transport, cfgs[0].TLS, cfgs[0].AEAD)
+	}
 }
 
 func TestLoadVmessConfigsPathFallback(t *testing.T) {
@@ -116,6 +127,9 @@ func TestLoadAnyTLSConfigs(t *testing.T) {
 	if c.Link == "" || c.Surge == "" {
 		t.Errorf("expected link and surge, got %+v", c)
 	}
+	if c.SkipCertCheck != "否" {
+		t.Errorf("skip_cert_check = %q, want 否 (no cert configured)", c.SkipCertCheck)
+	}
 }
 
 func TestLoadAllConfigsSorted(t *testing.T) {
@@ -137,5 +151,87 @@ func TestLoadAllConfigsSorted(t *testing.T) {
 	}
 	if all[0].Protocol != "anytls" || all[1].Protocol != "vmess" {
 		t.Errorf("expected anytls then vmess, got %q, %q", all[0].Protocol, all[1].Protocol)
+	}
+}
+
+func newKey(t *testing.T) *ecdsa.PrivateKey {
+	t.Helper()
+	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return k
+}
+
+func selfSignedPEM(t *testing.T) []byte {
+	t.Helper()
+	key := newKey(t)
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "example.com"},
+		Issuer:       pkix.Name{CommonName: "example.com"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		IsCA:         true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+}
+
+func caSignedPEM(t *testing.T) []byte {
+	t.Helper()
+	caKey := newKey(t)
+	caTmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "Test CA"},
+		Issuer:       pkix.Name{CommonName: "Test CA"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		IsCA:         true,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTmpl, caTmpl, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ca, err := x509.ParseCertificate(caDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leafKey := newKey(t)
+	leafTmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{CommonName: "example.com"},
+		Issuer:       ca.Subject,
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	leafDER, err := x509.CreateCertificate(rand.Reader, leafTmpl, ca, &leafKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER})
+}
+
+func TestAnyTLSSkipCertCheck(t *testing.T) {
+	dir := t.TempDir()
+
+	self := writeFile(t, dir, "self.crt", string(selfSignedPEM(t)))
+	selfConf := writeFile(t, dir, "self-conf.json", `{"inbounds":[{"tls":{"certificate_path":"`+self+`"}}]}`)
+	if got := anytlsSkipCertCheck(selfConf); got != "是" {
+		t.Errorf("self-signed cert: skip_cert_check = %q, want 是", got)
+	}
+
+	ca := writeFile(t, dir, "ca.crt", string(caSignedPEM(t)))
+	caConf := writeFile(t, dir, "ca-conf.json", `{"inbounds":[{"tls":{"certificate_path":"`+ca+`"}}]}`)
+	if got := anytlsSkipCertCheck(caConf); got != "否" {
+		t.Errorf("CA-signed cert: skip_cert_check = %q, want 否", got)
+	}
+
+	missingConf := writeFile(t, dir, "missing-conf.json", `{"inbounds":[{"tls":{"certificate_path":"/nonexistent.crt"}}]}`)
+	if got := anytlsSkipCertCheck(missingConf); got != "否" {
+		t.Errorf("missing cert: skip_cert_check = %q, want 否", got)
 	}
 }

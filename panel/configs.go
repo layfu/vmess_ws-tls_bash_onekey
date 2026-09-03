@@ -2,8 +2,11 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"os"
 	"sort"
@@ -15,16 +18,20 @@ import (
 // the live on-disk server config files at request time so the panel always
 // reflects the real state.
 type userConfig struct {
-	Protocol    string `json:"protocol"`
-	Username    string `json:"username"`
-	Address     string `json:"address"`
-	Port        string `json:"port"`
-	Secret      string `json:"secret"`
-	SecretLabel string `json:"secret_label"`
-	Path        string `json:"path,omitempty"`
-	SNI         string `json:"sni,omitempty"`
-	Link        string `json:"link"`
-	Surge       string `json:"surge,omitempty"`
+	Protocol      string `json:"protocol"`
+	Username      string `json:"username"`
+	Address       string `json:"address"`
+	Port          string `json:"port"`
+	Secret        string `json:"secret"`
+	SecretLabel   string `json:"secret_label"`
+	Path          string `json:"path,omitempty"`
+	SNI           string `json:"sni,omitempty"`
+	Transport     string `json:"transport,omitempty"`
+	TLS           string `json:"tls,omitempty"`
+	AEAD          string `json:"aead,omitempty"`
+	SkipCertCheck string `json:"skip_cert_check,omitempty"`
+	Link          string `json:"link"`
+	Surge         string `json:"surge,omitempty"`
 }
 
 type userSecret struct {
@@ -156,6 +163,58 @@ func singboxPort(path string) string {
 	return ""
 }
 
+func singboxCertPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var c struct {
+		Inbounds []struct {
+			TLS struct {
+				CertificatePath string `json:"certificate_path"`
+			} `json:"tls"`
+		} `json:"inbounds"`
+	}
+	if err := json.Unmarshal(data, &c); err != nil {
+		return ""
+	}
+	for _, in := range c.Inbounds {
+		if in.TLS.CertificatePath != "" {
+			return in.TLS.CertificatePath
+		}
+	}
+	return ""
+}
+
+func isSelfSignedCert(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return false
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(cert.RawIssuer, cert.RawSubject)
+}
+
+// anytlsSkipCertCheck returns "是" when the AnyTLS certificate is self-signed,
+// "否" when it is a reused (e.g. Let's Encrypt) v2ray certificate.
+func anytlsSkipCertCheck(configPath string) string {
+	certPath := singboxCertPath(configPath)
+	if certPath == "" || !isSelfSignedCert(certPath) {
+		return "否"
+	}
+	return "是"
+}
+
 func vmessLink(ps, id, add, port, path string) string {
 	if add == "" || id == "" {
 		return ""
@@ -189,6 +248,9 @@ func loadVmessConfigs(p ProtocolConfig, fallbackDomain string) []userConfig {
 			Secret:      u.secret,
 			SecretLabel: "UUID",
 			Path:        path,
+			Transport:   "websocket",
+			TLS:         "是",
+			AEAD:        "是",
 			Link:        vmessLink(u.name, u.secret, domain, qr.Port, path),
 		})
 	}
@@ -225,15 +287,16 @@ func loadAnyTLSConfigs(p ProtocolConfig, fallbackDomain string) []userConfig {
 	out := make([]userConfig, 0, len(users))
 	for _, u := range users {
 		out = append(out, userConfig{
-			Protocol:    "anytls",
-			Username:    u.name,
-			Address:     domain,
-			Port:        port,
-			Secret:      u.secret,
-			SecretLabel: "密码",
-			SNI:         domain,
-			Link:        anytlsLink(u.name, u.secret, domain, port),
-			Surge:       anytlsSurge(u.name, u.secret, domain, port),
+			Protocol:      "anytls",
+			Username:      u.name,
+			Address:       domain,
+			Port:          port,
+			Secret:        u.secret,
+			SecretLabel:   "密码",
+			SNI:           domain,
+			SkipCertCheck: anytlsSkipCertCheck(p.ConfigFile),
+			Link:          anytlsLink(u.name, u.secret, domain, port),
+			Surge:         anytlsSurge(u.name, u.secret, domain, port),
 		})
 	}
 	return out

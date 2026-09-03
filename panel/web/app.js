@@ -632,6 +632,10 @@ function configText(c) {
   lines.push(configSecretLabel(c) + ': ' + c.secret);
   if (c.path) lines.push('路径: ' + c.path);
   if (c.sni) lines.push('SNI: ' + c.sni);
+  if (c.transport) lines.push('传输方式: ' + c.transport);
+  if (c.tls) lines.push('Over TLS: ' + c.tls);
+  if (c.aead) lines.push('VMessAEAD: ' + c.aead);
+  if (c.skip_cert_check) lines.push('跳过证书检查: ' + c.skip_cert_check);
   if (c.link) lines.push('导入链接: ' + c.link);
   if (c.surge) lines.push('Surge: ' + c.surge);
   return lines.join('\n');
@@ -696,6 +700,10 @@ function configCard(c) {
       configKV(configSecretLabel(c), c.secret) +
       configKV('路径', c.path) +
       configKV('SNI', c.sni) +
+      configKV('传输方式', c.transport) +
+      configKV('Over TLS', c.tls) +
+      configKV('VMessAEAD', c.aead) +
+      configKV('跳过证书检查', c.skip_cert_check) +
     '</div>' +
     (c.link ? '<div class="config-link mono" title="' + escapeHtml(c.link) + '">' + escapeHtml(c.link) + '</div>' : '');
   card.querySelector('.copy-btn').addEventListener('click', () => {
