@@ -462,6 +462,20 @@ function appendSrTable(el, headers, rows) {
   el.appendChild(table);
 }
 
+let measureEl = null;
+function measureTextWidth(text) {
+  if (!measureEl) {
+    measureEl = document.createElement('span');
+    measureEl.style.position = 'absolute';
+    measureEl.style.visibility = 'hidden';
+    measureEl.style.whiteSpace = 'nowrap';
+    measureEl.style.fontSize = '13px';
+    document.body.appendChild(measureEl);
+  }
+  measureEl.textContent = text;
+  return measureEl.getBoundingClientRect().width;
+}
+
 // drawHistoryChart renders a per-user comparison as a horizontal bar chart:
 // one row per user, stacked by up/down traffic, sorted descending by total.
 function drawHistoryChart(users) {
@@ -492,6 +506,9 @@ function drawHistoryChart(users) {
   }));
   rows.sort((a, b) => b.total - a.total);
 
+  const NAME_MAX_W = window.matchMedia('(max-width: 640px)').matches ? 96 : 140;
+  const nameW = Math.min(NAME_MAX_W, Math.max(...rows.map((r) => measureTextWidth(r.name))));
+
   const srRows = rows.map((r) => [r.name, fmtBytes(r.up), fmtBytes(r.down), fmtBytes(r.total)]);
   appendSrTable(el, ['用户', '上行', '下行', '总量'], srRows);
 
@@ -506,6 +523,7 @@ function drawHistoryChart(users) {
 
     const name = document.createElement('span');
     name.className = 'hbar-name';
+    name.style.width = nameW + 'px';
     name.textContent = r.name;
     name.title = r.name;
 

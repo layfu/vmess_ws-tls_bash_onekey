@@ -555,15 +555,13 @@ input[type="text"]:hover { border-color: var(--border-strong); }
 }
 
 .hbar-row {
-  display: grid;
-  grid-template-columns: minmax(0, max-content) minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
   gap: 12px;
   padding: 7px 0;
 }
 .hbar-name {
-  min-width: 0;
-  max-width: 140px;
+  flex: none;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -572,6 +570,7 @@ input[type="text"]:hover { border-color: var(--border-strong); }
   color: var(--text);
 }
 .hbar-track {
+  flex: 1;
   height: 10px;
   border-radius: 999px;
   background: var(--surface-3);
@@ -587,6 +586,7 @@ input[type="text"]:hover { border-color: var(--border-strong); }
 .hbar-seg.up { background: var(--up); }
 .hbar-seg.down { background: var(--down); }
 .hbar-value {
+  flex: none;
   text-align: right;
   white-space: nowrap;
   font-size: 12.5px;
@@ -859,7 +859,6 @@ footer {
   .card h2 .hint { display: block; margin-left: 0; margin-top: 4px; }
   .kpi-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
   .kpi-value { font-size: 14px; }
-  .hbar-name { max-width: 96px; }
 }
 
 @media (max-width: 400px) {
