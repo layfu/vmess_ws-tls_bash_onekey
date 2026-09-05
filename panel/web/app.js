@@ -1158,7 +1158,10 @@ function applyUrlState() {
   showSubtab(params.get('subtab') === 'hist' ? 'hist' : 'conn');
 
   const sk = params.get('osort');
-  if (sk) overviewSort = { key: sk, dir: params.get('odir') === 'asc' ? 'asc' : 'desc' };
+  if (sk) {
+    overviewSort.key = sk;
+    overviewSort.dir = params.get('odir') === 'asc' ? 'asc' : 'desc';
+  }
 
   const hours = params.get('hours');
   if (hours) document.getElementById('chart-hours').value = hours;
@@ -1176,7 +1179,10 @@ function applyUrlState() {
   histProtocolMS.setValues(params.getAll('hproto'));
   histUserMS.setValues(params.getAll('huser'));
   const hsk = params.get('hsort');
-  if (hsk) histSort = { key: hsk, dir: params.get('hdir') === 'asc' ? 'asc' : 'desc' };
+  if (hsk) {
+    histSort.key = hsk;
+    histSort.dir = params.get('hdir') === 'asc' ? 'asc' : 'desc';
+  }
 
   const search = params.get('search');
   if (search != null) {
