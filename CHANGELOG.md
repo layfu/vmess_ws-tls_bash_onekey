@@ -1,4 +1,5 @@
 ## 2026-09-05
+* 修复「升级 流量面板」中途中断会导致面板停服未恢复（502）：改为先下载成功再停服切换，缩小中断窗口；下载失败时面板保持运行；启动后校验服务状态并给出失败日志提示（脚本 1.6.9.23）
 * 修复流量趋势 24h 横坐标在跨天（午夜）处日期与时间标签重叠：午夜点改为旋转显示日期，移除与时间标签冲突的独立日期标注（面板 1.0.14）
 * 面板界面按 Web 界面指南重做：补全表单标签与表格语义（`<label>`/`<caption>`/`aria-sort`/skip link），可排序表头改为 `<button>` 可键盘操作，多选下拉加 `aria-expanded` 与 Esc/方向键，toast 加 `aria-live`，图表加屏幕阅读器数据表与键盘聚焦数据点
 * 统一键盘焦点环（`:focus-visible`）、深色模式 `color-scheme`、数字列 `tabular-nums`、数字与日期改用 `Intl.*` 本地化、支持 `prefers-reduced-motion` 降级、触控 `touch-action`/`overscroll-behavior`

@@ -22,7 +22,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.9.22"
+shell_version="1.6.9.23"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -1011,8 +1011,8 @@ panel_update() {
         ;;
     esac
 
-    systemctl stop panel >/dev/null 2>&1
     if panel_download; then
+        systemctl stop panel >/dev/null 2>&1
         panel_config_gen
         panel_geo_download
         panel_session_secret_ensure
@@ -1023,10 +1023,13 @@ panel_update() {
         systemctl restart v2ray >/dev/null 2>&1
         [[ -f "${singbox_systemd_file}" ]] && systemctl restart sing-box >/dev/null 2>&1
         systemctl start panel >/dev/null 2>&1
-        judge "面板升级"
+        if systemctl is-active --quiet panel; then
+            judge "面板升级"
+        else
+            echo -e "${Error} ${RedBG} 面板启动失败，请执行 journalctl -u panel -n 50 查看日志 ${Font}"
+        fi
         systemctl restart nginx >/dev/null 2>&1
     else
-        systemctl start panel >/dev/null 2>&1
         return 1
     fi
 }
