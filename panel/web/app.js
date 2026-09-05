@@ -1081,6 +1081,9 @@ function showSubtab(key) {
     t.classList.toggle('active', active);
     t.setAttribute('aria-selected', String(active));
   });
+  if (currentSubtab === 'hist' && lastHistUsers.length) {
+    drawHistoryChart(lastHistUsers);
+  }
 }
 
 function parseUrlState() {
