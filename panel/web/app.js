@@ -152,9 +152,11 @@ function renderEmptyRow(tbody, colspan, msg) {
 
 async function refreshOverview() {
   const data = await fetchJSON('api/overview');
-  document.getElementById('total-up').textContent = fmtBytes(data.total_up);
-  document.getElementById('total-down').textContent = fmtBytes(data.total_down);
-  document.getElementById('total-users').textContent = data.users.length;
+  document.getElementById('kpi-up').textContent = fmtBytes(data.total_up);
+  document.getElementById('kpi-down').textContent = fmtBytes(data.total_down);
+  document.getElementById('kpi-total').textContent = fmtBytes((data.total_up || 0) + (data.total_down || 0));
+  document.getElementById('kpi-users').textContent = data.users.length;
+  document.getElementById('kpi-online').textContent = `在线 ${data.users.filter((u) => u.online).length}`;
 
   const tbody = document.querySelector('#users-table tbody');
   tbody.innerHTML = '';
@@ -528,13 +530,21 @@ function drawHistoryChart(users) {
     let tip = `${name} 总计 ${fmtBytes(grand)}`;
     for (const s of segs) tip += `\n${protoLabel(s.protocol)} ${fmtBytes(s.uplink + s.downlink)}`;
     let yCursor = margin.top + plotH;
+    const bars = [];
     for (let k = 0; k < segs.length; k++) {
       const h = (totals[k] / max) * plotH;
       yCursor -= h;
-      const r = rect(svgNS, x, yCursor, barW, h, protoColor(segs[k].protocol));
+      const isTop = k === segs.length - 1;
+      const r = rect(svgNS, x, yCursor, barW, h, protoColor(segs[k].protocol), isTop ? 3 : 0);
+      r.setAttribute('fill-opacity', '0.9');
       r.appendChild(titleEl(svgNS, tip));
       svg.appendChild(r);
+      bars.push(r);
     }
+    bars.forEach((r) => {
+      r.addEventListener('mouseenter', () => bars.forEach((b) => b.setAttribute('fill-opacity', '1')));
+      r.addEventListener('mouseleave', () => bars.forEach((b) => b.setAttribute('fill-opacity', '0.9')));
+    });
     svg.appendChild(axisText(svgNS, shortName(name), x + barW / 2, margin.top + plotH + 16, 'middle'));
   });
 
@@ -670,6 +680,11 @@ function drawChart(buckets) {
   svg.setAttribute('width', width);
   svg.setAttribute('height', height);
 
+  const defs = document.createElementNS(svgNS, 'defs');
+  defs.appendChild(makeGradient(svgNS, 'chart-grad-up', '#38d39f'));
+  defs.appendChild(makeGradient(svgNS, 'chart-grad-down', '#5aa2ff'));
+  svg.appendChild(defs);
+
   // Y 轴：刻度线与数值（含单位）
   const yTicks = 4;
   for (let i = 0; i <= yTicks; i++) {
@@ -697,14 +712,12 @@ function drawChart(buckets) {
 
   const areaUp = document.createElementNS(svgNS, 'path');
   areaUp.setAttribute('d', areaPath(upPts, basePts));
-  areaUp.setAttribute('fill', '#38d39f');
-  areaUp.setAttribute('fill-opacity', '0.85');
+  areaUp.setAttribute('fill', 'url(#chart-grad-up)');
   svg.appendChild(areaUp);
 
   const areaDown = document.createElementNS(svgNS, 'path');
   areaDown.setAttribute('d', areaPath(downPts, upPts));
-  areaDown.setAttribute('fill', '#5aa2ff');
-  areaDown.setAttribute('fill-opacity', '0.85');
+  areaDown.setAttribute('fill', 'url(#chart-grad-down)');
   svg.appendChild(areaDown);
 
   const lineUp = document.createElementNS(svgNS, 'path');
@@ -885,14 +898,33 @@ function axisText2(svgNS, line1, line2, x, y) {
   return t;
 }
 
-function rect(svgNS, x, y, w, h, fill) {
+function rect(svgNS, x, y, w, h, fill, rx) {
   const r = document.createElementNS(svgNS, 'rect');
   r.setAttribute('x', x);
   r.setAttribute('y', y);
   r.setAttribute('width', Math.max(w, 0.5));
   r.setAttribute('height', Math.max(h, 0));
   r.setAttribute('fill', fill);
+  if (rx) r.setAttribute('rx', rx);
   return r;
+}
+
+function makeGradient(svgNS, id, color) {
+  const g = document.createElementNS(svgNS, 'linearGradient');
+  g.setAttribute('id', id);
+  g.setAttribute('x1', '0'); g.setAttribute('y1', '0');
+  g.setAttribute('x2', '0'); g.setAttribute('y2', '1');
+  const s1 = document.createElementNS(svgNS, 'stop');
+  s1.setAttribute('offset', '0%');
+  s1.setAttribute('stop-color', color);
+  s1.setAttribute('stop-opacity', '0.55');
+  const s2 = document.createElementNS(svgNS, 'stop');
+  s2.setAttribute('offset', '100%');
+  s2.setAttribute('stop-color', color);
+  s2.setAttribute('stop-opacity', '0.06');
+  g.appendChild(s1);
+  g.appendChild(s2);
+  return g;
 }
 
 function titleEl(svgNS, content) {
@@ -1036,6 +1068,18 @@ async function refreshConfigs() {
 
 // ---- URL 状态同步 ----
 let currentPage = 'dashboard';
+let currentSubtab = 'conn';
+
+function showSubtab(key) {
+  currentSubtab = key === 'hist' ? 'hist' : 'conn';
+  document.getElementById('view-conn').hidden = currentSubtab !== 'conn';
+  document.getElementById('view-hist').hidden = currentSubtab !== 'hist';
+  document.querySelectorAll('.sub-tab').forEach((t) => {
+    const active = t.dataset.subtab === currentSubtab;
+    t.classList.toggle('active', active);
+    t.setAttribute('aria-selected', String(active));
+  });
+}
 
 function parseUrlState() {
   const raw = location.hash || '';
@@ -1068,6 +1112,7 @@ function collectParams() {
   writeArr(params, 'huser', histUserMS.getValues());
   params.set('hsort', histSort.key);
   params.set('hdir', histSort.dir);
+  if (currentSubtab === 'hist') params.set('subtab', 'hist');
   if (configSearch) params.set('search', configSearch);
   if (configProto) params.set('proto', configProto);
   return params;
@@ -1098,6 +1143,7 @@ async function ensureConfigs() {
 function applyUrlState() {
   const { page, params } = parseUrlState();
   showPage(page);
+  showSubtab(params.get('subtab') === 'hist' ? 'hist' : 'conn');
 
   const sk = params.get('osort');
   if (sk) overviewSort = { key: sk, dir: params.get('odir') === 'asc' ? 'asc' : 'desc' };
@@ -1196,6 +1242,10 @@ document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', (e)
   if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
   e.preventDefault();
   switchPage(t.dataset.page);
+}));
+document.querySelectorAll('.sub-tab').forEach((t) => t.addEventListener('click', () => {
+  showSubtab(t.dataset.subtab);
+  persistState();
 }));
 document.getElementById('config-refresh').addEventListener('click', () => {
   const btn = document.getElementById('config-refresh');
