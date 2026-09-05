@@ -436,16 +436,6 @@ async function refreshHistory() {
   drawHistoryChart(lastHistUsers);
 }
 
-function protoColor(p) {
-  if (p === 'vmess') return '#7c5cff';
-  if (p === 'anytls') return '#ff8c4f';
-  return '#4f8cff';
-}
-
-function shortName(s) {
-  return s.length > 12 ? s.slice(0, 12) + '…' : s;
-}
-
 function appendSrTable(el, headers, rows) {
   const table = document.createElement('table');
   table.className = 'sr-only';
@@ -472,8 +462,8 @@ function appendSrTable(el, headers, rows) {
   el.appendChild(table);
 }
 
-// drawHistoryChart renders a per-user comparison bar chart for the selected
-// range: x-axis is users, y-axis is traffic, stacked by protocol.
+// drawHistoryChart renders a per-user comparison as a horizontal bar chart:
+// one row per user, stacked by up/down traffic, sorted descending by total.
 function drawHistoryChart(users) {
   const el = document.getElementById('hist-chart');
   el.innerHTML = '';
@@ -491,93 +481,68 @@ function drawHistoryChart(users) {
   const byUser = new Map();
   for (const u of users) {
     const name = u.username || '(无用户)';
-    if (!byUser.has(name)) byUser.set(name, []);
-    byUser.get(name).push(u);
+    if (!byUser.has(name)) byUser.set(name, { up: 0, down: 0 });
+    const s = byUser.get(name);
+    s.up += u.uplink || 0;
+    s.down += u.downlink || 0;
   }
-  const names = [...byUser.keys()].sort();
 
-  const srRows = [];
-  for (const name of names) {
-    for (const u of byUser.get(name)) {
-      srRows.push([name, protoLabel(u.protocol), fmtBytes(u.uplink + u.downlink)]);
+  const rows = [...byUser.entries()].map(([name, s]) => ({
+    name, up: s.up, down: s.down, total: s.up + s.down,
+  }));
+  rows.sort((a, b) => b.total - a.total);
+
+  const srRows = rows.map((r) => [r.name, fmtBytes(r.up), fmtBytes(r.down), fmtBytes(r.total)]);
+  appendSrTable(el, ['用户', '上行', '下行', '总量'], srRows);
+
+  const max = Math.max(1, ...rows.map((r) => r.total));
+
+  const wrap = document.createElement('div');
+  wrap.className = 'chart-fade';
+
+  for (const r of rows) {
+    const row = document.createElement('div');
+    row.className = 'hbar-row';
+
+    const name = document.createElement('span');
+    name.className = 'hbar-name';
+    name.textContent = r.name;
+    name.title = r.name;
+
+    const track = document.createElement('div');
+    track.className = 'hbar-track';
+    const fill = document.createElement('span');
+    fill.className = 'hbar-fill';
+    fill.style.width = (r.total / max * 100) + '%';
+    if (r.up > 0) {
+      const segUp = document.createElement('span');
+      segUp.className = 'hbar-seg up';
+      segUp.style.width = (r.up / r.total * 100) + '%';
+      fill.appendChild(segUp);
     }
-  }
-  appendSrTable(el, ['用户', '协议', '流量'], srRows);
-
-  const svgNS = 'http://www.w3.org/2000/svg';
-  const maxBarW = 140;
-  const minBarW = 12;
-  const gap = 14;
-  const height = 260;
-  const margin = { top: 6, right: 12, bottom: 44, left: 56 };
-  const containerW = Math.max(el.clientWidth - 16, 320);
-  const available = containerW - margin.left - margin.right;
-  let barW = (available + gap) / names.length - gap;
-  if (barW > maxBarW) barW = maxBarW;
-  if (barW < minBarW) barW = minBarW;
-  const plotW = names.length * (barW + gap) - gap;
-  const w = Math.max(containerW, margin.left + plotW + margin.right);
-  const startX = margin.left + Math.max(0, (w - margin.left - margin.right - plotW) / 2);
-  const plotH = height - margin.top - margin.bottom;
-
-  const max = Math.max(1, ...names.map((name) =>
-    byUser.get(name).reduce((s, u) => s + u.uplink + u.downlink, 0)));
-
-  const svg = document.createElementNS(svgNS, 'svg');
-  svg.setAttribute('width', w);
-  svg.setAttribute('height', height);
-  svg.classList.add('chart-fade');
-
-  const yTicks = 4;
-  for (let i = 0; i <= yTicks; i++) {
-    const val = (max / yTicks) * i;
-    const y = margin.top + plotH - (val / max) * plotH;
-    const line = document.createElementNS(svgNS, 'line');
-    line.setAttribute('x1', margin.left);
-    line.setAttribute('y1', y);
-    line.setAttribute('x2', w - margin.right);
-    line.setAttribute('y2', y);
-    line.setAttribute('stroke', '#262d36');
-    line.setAttribute('stroke-width', '1');
-    svg.appendChild(line);
-    svg.appendChild(axisText(svgNS, fmtBytes(val), margin.left - 6, y + 3, 'end'));
-  }
-
-  names.forEach((name, i) => {
-    const x = startX + i * (barW + gap);
-    const segs = byUser.get(name);
-    const totals = segs.map((s) => s.uplink + s.downlink);
-    const grand = totals.reduce((a, b) => a + b, 0);
-    let tip = `${name} 总计 ${fmtBytes(grand)}`;
-    for (const s of segs) tip += `\n${protoLabel(s.protocol)} ${fmtBytes(s.uplink + s.downlink)}`;
-    let yCursor = margin.top + plotH;
-    const bars = [];
-    for (let k = 0; k < segs.length; k++) {
-      const h = (totals[k] / max) * plotH;
-      yCursor -= h;
-      const isTop = k === segs.length - 1;
-      const r = rect(svgNS, x, yCursor, barW, h, protoColor(segs[k].protocol), isTop ? 3 : 0);
-      r.setAttribute('fill-opacity', '0.9');
-      r.appendChild(titleEl(svgNS, tip));
-      svg.appendChild(r);
-      bars.push(r);
+    if (r.down > 0) {
+      const segDown = document.createElement('span');
+      segDown.className = 'hbar-seg down';
+      segDown.style.width = (r.down / r.total * 100) + '%';
+      fill.appendChild(segDown);
     }
-    bars.forEach((r) => {
-      r.addEventListener('mouseenter', () => bars.forEach((b) => b.setAttribute('fill-opacity', '1')));
-      r.addEventListener('mouseleave', () => bars.forEach((b) => b.setAttribute('fill-opacity', '0.9')));
-    });
-    svg.appendChild(axisText(svgNS, shortName(name), x + barW / 2, margin.top + plotH + 16, 'middle'));
-  });
+    track.appendChild(fill);
+
+    const value = document.createElement('span');
+    value.className = 'hbar-value mono';
+    value.textContent = fmtBytes(r.total);
+
+    row.appendChild(name);
+    row.appendChild(track);
+    row.appendChild(value);
+    wrap.appendChild(row);
+  }
 
   const legend = document.createElement('div');
-  legend.style.marginTop = '6px';
-  legend.style.fontSize = '12px';
-  legend.style.color = 'var(--muted)';
-  const protos = [...new Set(users.map((u) => u.protocol))];
-  legend.innerHTML = protos.map((p) =>
-    `<span style="color:${protoColor(p)}">■</span> ${protoLabel(p)}`).join(' &nbsp; ');
-  el.appendChild(svg);
-  el.appendChild(legend);
+  legend.className = 'chart-legend';
+  legend.innerHTML = '<span style="color:var(--up)">■</span> 上行 &nbsp; <span style="color:var(--down)">■</span> 下行';
+  wrap.appendChild(legend);
+  el.appendChild(wrap);
 }
 
 function protoLabel(p) { return p === 'vmess' ? 'VMess' : (p === 'anytls' ? 'AnyTLS' : p); }
@@ -920,17 +885,6 @@ function axisText2(svgNS, line1, line2, x, y) {
   return t;
 }
 
-function rect(svgNS, x, y, w, h, fill, rx) {
-  const r = document.createElementNS(svgNS, 'rect');
-  r.setAttribute('x', x);
-  r.setAttribute('y', y);
-  r.setAttribute('width', Math.max(w, 0.5));
-  r.setAttribute('height', Math.max(h, 0));
-  r.setAttribute('fill', fill);
-  if (rx) r.setAttribute('rx', rx);
-  return r;
-}
-
 function makeGradient(svgNS, id, color) {
   const g = document.createElementNS(svgNS, 'linearGradient');
   g.setAttribute('id', id);
@@ -947,12 +901,6 @@ function makeGradient(svgNS, id, color) {
   g.appendChild(s1);
   g.appendChild(s2);
   return g;
-}
-
-function titleEl(svgNS, content) {
-  const t = document.createElementNS(svgNS, 'title');
-  t.textContent = content;
-  return t;
 }
 
 // ---- 用户配置页 ----

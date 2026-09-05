@@ -245,7 +245,7 @@ section { margin-bottom: 22px; }
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 13px 16px 14px;
+  padding: 12px 14px 13px;
   box-shadow: var(--highlight), var(--shadow-sm);
   transition: transform 150ms var(--ease-out), border-color 150ms var(--ease-out),
     box-shadow 150ms var(--ease-out);
@@ -265,19 +265,19 @@ section { margin-bottom: 22px; }
 .kpi-icon {
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
+  width: 26px;
+  height: 26px;
   border-radius: 8px;
-  margin-bottom: 7px;
+  margin-bottom: 6px;
 }
-.kpi-icon svg { width: 16px; height: 16px; }
+.kpi-icon svg { width: 14px; height: 14px; }
 .kpi-card.up .kpi-icon { color: var(--up); background: rgba(62, 207, 155, 0.12); }
 .kpi-card.down .kpi-icon { color: var(--down); background: rgba(90, 162, 255, 0.14); }
 .kpi-card.total .kpi-icon { color: var(--accent); background: rgba(91, 140, 255, 0.14); }
 .kpi-card.users .kpi-icon { color: var(--online); background: rgba(61, 220, 132, 0.12); }
 .kpi-label { color: var(--muted); font-size: 12px; }
 .kpi-value {
-  font-size: 21px;
+  font-size: 19px;
   font-weight: 700;
   line-height: 1.2;
   letter-spacing: -0.01em;
@@ -548,11 +548,57 @@ input[type="text"]:hover { border-color: var(--border-strong); }
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 8px;
-  overflow-x: auto;
-  overflow-y: hidden;
+  padding: 14px 16px;
+  overflow: hidden;
   margin-bottom: 14px;
   min-height: 60px;
+}
+
+.hbar-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 0;
+}
+.hbar-name {
+  flex: none;
+  width: 140px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  font-size: 13px;
+  color: var(--text);
+}
+.hbar-track {
+  flex: 1;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+.hbar-fill {
+  display: flex;
+  height: 100%;
+  border-radius: 999px;
+  overflow: hidden;
+  min-width: 2px;
+}
+.hbar-seg.up { background: var(--up); }
+.hbar-seg.down { background: var(--down); }
+.hbar-value {
+  flex: none;
+  width: 90px;
+  text-align: right;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.chart-legend {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 /* ---- 多选下拉 ---- */
@@ -814,7 +860,9 @@ footer {
   .card { padding: 16px 14px; }
   .card h2 .hint { display: block; margin-left: 0; margin-top: 4px; }
   .kpi-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
-  .kpi-value { font-size: 18px; }
+  .kpi-value { font-size: 17px; }
+  .hbar-name { width: 96px; }
+  .hbar-value { width: 72px; }
 }
 
 @media (max-width: 400px) {
