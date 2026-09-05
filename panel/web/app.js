@@ -506,6 +506,7 @@ function drawHistoryChart(users) {
   const svg = document.createElementNS(svgNS, 'svg');
   svg.setAttribute('width', w);
   svg.setAttribute('height', height);
+  svg.classList.add('chart-fade');
 
   const yTicks = 4;
   for (let i = 0; i <= yTicks; i++) {
@@ -679,6 +680,7 @@ function drawChart(buckets) {
   const svg = document.createElementNS(svgNS, 'svg');
   svg.setAttribute('width', width);
   svg.setAttribute('height', height);
+  svg.classList.add('chart-fade');
 
   const defs = document.createElementNS(svgNS, 'defs');
   defs.appendChild(makeGradient(svgNS, 'chart-grad-up', '#38d39f'));
