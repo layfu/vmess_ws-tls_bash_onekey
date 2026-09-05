@@ -173,8 +173,8 @@ async function refreshOverview() {
   setKpiValue(document.getElementById('kpi-up'), data.total_up || 0, fmtBytes);
   setKpiValue(document.getElementById('kpi-down'), data.total_down || 0, fmtBytes);
   setKpiValue(document.getElementById('kpi-total'), (data.total_up || 0) + (data.total_down || 0), fmtBytes);
-  setKpiValue(document.getElementById('kpi-users'), data.users.length, (n) => String(Math.round(n)));
-  document.getElementById('kpi-online').textContent = `在线 ${data.users.filter((u) => u.online).length}`;
+  setKpiValue(document.getElementById('kpi-online'), data.users.filter((u) => u.online).length, (n) => String(Math.round(n)));
+  document.getElementById('kpi-total-users').textContent = `共 ${data.users.length} 用户`;
   overviewInitialized = true;
   document.querySelectorAll('.skeleton').forEach((el) => el.classList.remove('skeleton'));
 
