@@ -767,7 +767,7 @@ function drawChart(buckets) {
   }
 
   if (step === 1) {
-    // 24h：逐小时旋转标注，午夜处额外标注日期
+    // 24h：逐小时旋转标注，午夜处显示日期
     for (let i = 0; i < buckets.length; i++) {
       const x = barCenter(i);
       const rt = document.createElementNS(svgNS, 'text');
@@ -776,11 +776,8 @@ function drawChart(buckets) {
       rt.setAttribute('text-anchor', 'end');
       rt.setAttribute('class', 'axis');
       rt.setAttribute('transform', `rotate(-45 ${x} ${tickY + 10})`);
-      rt.textContent = fmtClockLabel(buckets[i].hour);
+      rt.textContent = hourOf(i) === 0 ? fmtDayLabel(buckets[i].hour) : fmtClockLabel(buckets[i].hour);
       svg.appendChild(rt);
-      if (hourOf(i) === 0) {
-        svg.appendChild(axisText(svgNS, fmtDayLabel(buckets[i].hour), x, tickY + 26, 'middle'));
-      }
     }
   } else {
     for (const i of labeled) {

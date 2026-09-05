@@ -1,4 +1,5 @@
 ## 2026-09-05
+* 修复流量趋势 24h 横坐标在跨天（午夜）处日期与时间标签重叠：午夜点改为旋转显示日期，移除与时间标签冲突的独立日期标注（面板 1.0.14）
 * 面板界面按 Web 界面指南重做：补全表单标签与表格语义（`<label>`/`<caption>`/`aria-sort`/skip link），可排序表头改为 `<button>` 可键盘操作，多选下拉加 `aria-expanded` 与 Esc/方向键，toast 加 `aria-live`，图表加屏幕阅读器数据表与键盘聚焦数据点
 * 统一键盘焦点环（`:focus-visible`）、深色模式 `color-scheme`、数字列 `tabular-nums`、数字与日期改用 `Intl.*` 本地化、支持 `prefers-reduced-motion` 降级、触控 `touch-action`/`overscroll-behavior`
 * 新增 URL 状态同步：Tab、排序、图表/历史时间范围、多选筛选、配置搜索与协议分组均写入 URL，支持前进后退与深链接；表格与图表补充空态提示；自动刷新时避免打断输入焦点（面板 1.0.13）
