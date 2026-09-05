@@ -587,6 +587,7 @@ input[type="text"]:hover { border-color: var(--border-strong); }
 .hbar-seg.down { background: var(--down); }
 .hbar-value {
   flex: none;
+  width: 72px;
   text-align: right;
   white-space: nowrap;
   font-size: 12.5px;
