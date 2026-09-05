@@ -404,6 +404,7 @@ function histRange() {
 }
 
 let lastHistUsers = [];
+let lastChartBuckets = [];
 
 async function refreshHistory() {
   const { start, end } = histRange();
@@ -665,6 +666,7 @@ function areaPath(topPts, bottomPts) {
 function drawChart(buckets) {
   const el = document.getElementById('chart');
   el.innerHTML = '';
+  lastChartBuckets = buckets;
   const max = Math.max(1, ...buckets.map((b) => b.up + b.down));
 
   const svgNS = 'http://www.w3.org/2000/svg';
@@ -1145,6 +1147,10 @@ function showPage(page) {
   document.getElementById('footer-note').textContent =
     page === 'configs' ? '配置数据按需读取，点击「刷新」获取最新' : '数据每 15 秒自动刷新';
   syncAllIndicators();
+  if (page === 'dashboard') {
+    if (lastChartBuckets.length) drawChart(lastChartBuckets);
+    if (currentSubtab === 'hist' && lastHistUsers.length) drawHistoryChart(lastHistUsers);
+  }
 }
 
 async function ensureConfigs() {
