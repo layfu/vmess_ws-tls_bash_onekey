@@ -3,10 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0f1216">
 <title>流量面板</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<a class="skip-link" href="#main">跳到主内容</a>
 <header>
   <h1>流量面板</h1>
   <div class="header-right">
@@ -19,28 +21,28 @@
   </div>
 </header>
 
-<nav class="tabs">
-  <button class="tab active" data-page="dashboard">仪表盘</button>
-  <button class="tab" data-page="configs">配置</button>
+<nav class="tabs" aria-label="主要导航">
+  <a class="tab active" href="#/dashboard" data-page="dashboard">仪表盘</a>
+  <a class="tab" href="#/configs" data-page="configs">配置</a>
 </nav>
 
-<main>
+<main id="main" tabindex="-1">
 <div id="page-dashboard">
   <section>
-    <h2>当月流量 <span class="hint">上行/下行/总量为当月流量，累计为终身总量</span>
-    </h2>
+    <h2>当月流量 <span class="hint">上行/下行/总量为当月流量，累计为终身总量</span></h2>
     <div class="table-wrap">
       <table id="users-table">
+        <caption class="sr-only">当月各用户流量统计</caption>
         <thead>
           <tr>
-            <th class="sortable" data-sort="protocol">协议<span class="sort-arrow"></span></th>
-            <th class="sortable" data-sort="username">用户<span class="sort-arrow"></span></th>
-            <th class="sortable" data-sort="uplink">上行<span class="sort-arrow"></span></th>
-            <th class="sortable" data-sort="downlink">下行<span class="sort-arrow"></span></th>
-            <th class="sortable" data-sort="total">总量<span class="sort-arrow"></span></th>
-            <th class="sortable" data-sort="lifetime">累计<span class="sort-arrow"></span></th>
-            <th class="sortable" data-sort="online">状态<span class="sort-arrow"></span></th>
-            <th class="sortable" data-sort="last_seen">最近活跃<span class="sort-arrow"></span></th>
+            <th class="sortable" aria-sort="none"><button class="sort-btn" data-sort="protocol">协议<span class="sort-arrow"></span></button></th>
+            <th class="sortable" aria-sort="none"><button class="sort-btn" data-sort="username">用户<span class="sort-arrow"></span></button></th>
+            <th class="sortable" aria-sort="none"><button class="sort-btn" data-sort="uplink">上行<span class="sort-arrow"></span></button></th>
+            <th class="sortable" aria-sort="none"><button class="sort-btn" data-sort="downlink">下行<span class="sort-arrow"></span></button></th>
+            <th class="sortable" aria-sort="descending"><button class="sort-btn" data-sort="total">总量<span class="sort-arrow"></span></button></th>
+            <th class="sortable" aria-sort="none"><button class="sort-btn" data-sort="lifetime">累计<span class="sort-arrow"></span></button></th>
+            <th class="sortable" aria-sort="none"><button class="sort-btn" data-sort="online">状态<span class="sort-arrow"></span></button></th>
+            <th class="sortable" aria-sort="none"><button class="sort-btn" data-sort="last_seen">最近活跃<span class="sort-arrow"></span></button></th>
           </tr>
         </thead>
         <tbody></tbody>
@@ -52,6 +54,7 @@
     <h2>流量趋势</h2>
     <div class="filters">
       <div class="ms" id="chart-user"></div>
+      <label class="sr-only" for="chart-hours">趋势时间范围</label>
       <select id="chart-hours">
         <option value="24">最近 24 小时</option>
         <option value="72">最近 3 天</option>
@@ -59,7 +62,7 @@
       </select>
       <button id="clear-chart-filters" class="btn ghost">清除</button>
     </div>
-    <div id="chart"></div>
+    <div id="chart" role="img" aria-label="上行与下行流量趋势图"></div>
   </section>
 
   <section>
@@ -72,6 +75,7 @@
     </div>
     <div class="table-wrap conn-scroll">
       <table id="conn-table">
+        <caption class="sr-only">最近连接记录</caption>
         <thead>
           <tr>
             <th>时间</th>
@@ -93,6 +97,7 @@
     <div class="filters">
       <div class="ms" id="hist-protocol"></div>
       <div class="ms" id="hist-user"></div>
+      <label class="sr-only" for="hist-range">历史统计时间范围</label>
       <select id="hist-range">
         <option value="7">近 7 天</option>
         <option value="30">近 1 个月</option>
@@ -103,7 +108,9 @@
         <option value="custom">自定义</option>
       </select>
       <span id="hist-custom" style="display:none;">
+        <label class="sr-only" for="hist-from">自定义开始日期</label>
         <input type="date" id="hist-from">
+        <label class="sr-only" for="hist-to">自定义结束日期</label>
         <input type="date" id="hist-to">
       </span>
       <button id="clear-hist-filters" class="btn ghost">清除</button>
@@ -113,16 +120,17 @@
       <div class="stat"><span class="label">下行</span><span class="value" id="hist-down">—</span></div>
       <div class="stat"><span class="label">总量</span><span class="value" id="hist-total">—</span></div>
     </div>
-    <div id="hist-chart"></div>
+    <div id="hist-chart" role="img" aria-label="各用户历史流量柱状对比图"></div>
     <div class="table-wrap">
       <table id="hist-table">
+        <caption class="sr-only">历史统计各用户流量明细</caption>
         <thead>
           <tr>
-            <th class="sortable" data-sort="protocol">协议<span class="sort-arrow"></span></th>
-            <th class="sortable" data-sort="username">用户<span class="sort-arrow"></span></th>
-            <th class="sortable" data-sort="uplink">上行<span class="sort-arrow"></span></th>
-            <th class="sortable" data-sort="downlink">下行<span class="sort-arrow"></span></th>
-            <th class="sortable" data-sort="total">总量<span class="sort-arrow"></span></th>
+            <th class="sortable" aria-sort="none"><button class="sort-btn" data-sort="protocol">协议<span class="sort-arrow"></span></button></th>
+            <th class="sortable" aria-sort="none"><button class="sort-btn" data-sort="username">用户<span class="sort-arrow"></span></button></th>
+            <th class="sortable" aria-sort="none"><button class="sort-btn" data-sort="uplink">上行<span class="sort-arrow"></span></button></th>
+            <th class="sortable" aria-sort="none"><button class="sort-btn" data-sort="downlink">下行<span class="sort-arrow"></span></button></th>
+            <th class="sortable" aria-sort="descending"><button class="sort-btn" data-sort="total">总量<span class="sort-arrow"></span></button></th>
           </tr>
         </thead>
         <tbody></tbody>
@@ -135,8 +143,9 @@
   <section>
     <h2>用户配置 <span class="hint">数据实时读取自服务端配置，随实际配置变更</span></h2>
     <div class="filters">
-      <input type="text" id="config-search" placeholder="搜索用户名">
-      <div class="seg" id="config-proto">
+      <label class="sr-only" for="config-search">搜索用户名</label>
+      <input type="text" id="config-search" placeholder="搜索用户名…" autocomplete="off" spellcheck="false">
+      <div class="seg" id="config-proto" role="group" aria-label="按协议筛选">
         <button class="seg-btn active" data-proto="">全部</button>
         <button class="seg-btn" data-proto="vmess">VMess</button>
         <button class="seg-btn" data-proto="anytls">AnyTLS</button>

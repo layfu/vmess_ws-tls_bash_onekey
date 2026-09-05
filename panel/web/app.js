@@ -1,36 +1,36 @@
+// ---- 格式化 ----
+const byteFmt = (digits) => new Intl.NumberFormat('zh-CN', { maximumFractionDigits: digits });
+
 function fmtBytes(n) {
   if (n == null) return '—';
   if (n < 1024) return n + ' B';
   const units = ['KB', 'MB', 'GB', 'TB', 'PB'];
   let i = -1;
   do { n /= 1024; i++; } while (n >= 1024 && i < units.length - 1);
-  return n.toFixed(n >= 100 ? 0 : (n >= 10 ? 1 : 2)) + ' ' + units[i];
+  const digits = n >= 100 ? 0 : (n >= 10 ? 1 : 2);
+  return byteFmt(digits).format(n) + ' ' + units[i];
 }
+
+const fmtDateTime = new Intl.DateTimeFormat('zh-CN', {
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+});
+const fmtHourAxis = new Intl.DateTimeFormat('zh-CN', {
+  month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+});
+const fmtDayAxis = new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit' });
+const fmtClockAxis = new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
 
 function fmtTime(ts) {
   if (!ts) return '—';
-  const d = new Date(ts * 1000);
-  const p = (x) => String(x).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  return fmtDateTime.format(new Date(ts * 1000));
 }
 
-function fmtHourLabel(hour) {
-  const d = new Date(hour * 1000);
-  const p = (x) => String(x).padStart(2, '0');
-  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:00`;
-}
+function fmtHourLabel(hour) { return fmtHourAxis.format(new Date(hour * 1000)); }
+function fmtDayLabel(hour) { return fmtDayAxis.format(new Date(hour * 1000)); }
+function fmtClockLabel(hour) { return fmtClockAxis.format(new Date(hour * 1000)); }
 
-function fmtDayLabel(hour) {
-  const d = new Date(hour * 1000);
-  const p = (x) => String(x).padStart(2, '0');
-  return `${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-}
-
-function fmtClockLabel(hour) {
-  const d = new Date(hour * 1000);
-  const p = (x) => String(x).padStart(2, '0');
-  return `${p(d.getHours())}:00`;
-}
+const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 async function fetchJSON(url) {
   const res = await fetch(url, { cache: 'no-store' });
@@ -44,7 +44,7 @@ async function fetchJSON(url) {
 
 function protoBadge(p) {
   const label = p === 'vmess' ? 'VMess' : (p === 'anytls' ? 'AnyTLS' : p);
-  return `<span class="badge ${p}">${label}</span>`;
+  return `<span class="badge ${escapeHtml(p)}">${label}</span>`;
 }
 
 function statusBadge(s) {
@@ -57,6 +57,12 @@ function statusBadge(s) {
   };
   const m = map[s] || { cls: '', label: escapeHtml(s) };
   return `<span class="badge ${m.cls}">${m.label}</span>`;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
 }
 
 // ---- 表格排序 ----
@@ -105,27 +111,43 @@ function sortRows(rows, getVal, sortState) {
   });
 }
 
+function toggleSort(key, sortState) {
+  if (sortState.key === key) {
+    sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    sortState.key = key;
+    sortState.dir = NUMERIC_SORT_KEYS[key] ? 'desc' : 'asc';
+  }
+}
+
 function updateSortIndicators(tableId, sortState) {
   document.querySelectorAll('#' + tableId + ' th.sortable').forEach((th) => {
-    const key = th.dataset.sort;
+    const btn = th.querySelector('.sort-btn');
+    const key = btn.dataset.sort;
     const arrow = th.querySelector('.sort-arrow');
     if (arrow) arrow.textContent = key === sortState.key ? (sortState.dir === 'asc' ? '▲' : '▼') : '';
+    th.setAttribute('aria-sort', key === sortState.key ? (sortState.dir === 'asc' ? 'ascending' : 'descending') : 'none');
   });
 }
 
 function setupSortable(tableId, sortState, onSort) {
-  document.querySelectorAll('#' + tableId + ' th.sortable').forEach((th) => {
-    th.addEventListener('click', () => {
-      const key = th.dataset.sort;
-      if (sortState.key === key) {
-        sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
-      } else {
-        sortState.key = key;
-        sortState.dir = NUMERIC_SORT_KEYS[key] ? 'desc' : 'asc';
-      }
+  document.querySelectorAll('#' + tableId + ' th.sortable .sort-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      toggleSort(btn.dataset.sort, sortState);
       onSort();
+      persistState();
     });
   });
+}
+
+function renderEmptyRow(tbody, colspan, msg) {
+  const tr = document.createElement('tr');
+  const td = document.createElement('td');
+  td.className = 'table-empty';
+  td.colSpan = colspan;
+  td.textContent = msg;
+  tr.appendChild(td);
+  tbody.appendChild(tr);
 }
 
 async function refreshOverview() {
@@ -137,6 +159,9 @@ async function refreshOverview() {
   const tbody = document.querySelector('#users-table tbody');
   tbody.innerHTML = '';
   const users = sortRows(data.users, overviewSortVal, overviewSort);
+  if (!users.length) {
+    renderEmptyRow(tbody, 8, '暂无用户数据');
+  }
   for (const u of users) {
     const tr = document.createElement('tr');
     tr.innerHTML =
@@ -163,11 +188,14 @@ function multiSelect(el, placeholder, onChange) {
   const trigger = document.createElement('button');
   trigger.type = 'button';
   trigger.className = 'ms-trigger';
+  trigger.setAttribute('aria-haspopup', 'true');
+  trigger.setAttribute('aria-expanded', 'false');
   const label = document.createElement('span');
   label.className = 'ms-label';
   trigger.appendChild(label);
   const caret = document.createElement('span');
   caret.className = 'ms-caret';
+  caret.setAttribute('aria-hidden', 'true');
   caret.textContent = '▾';
   trigger.appendChild(caret);
 
@@ -179,6 +207,12 @@ function multiSelect(el, placeholder, onChange) {
 
   el.appendChild(trigger);
   el.appendChild(menu);
+
+  function setOpen(open) {
+    state.open = open;
+    el.classList.toggle('open', open);
+    trigger.setAttribute('aria-expanded', String(open));
+  }
 
   function updateLabel() {
     if (state.values.length === 0) { label.textContent = placeholder; return; }
@@ -218,17 +252,34 @@ function multiSelect(el, placeholder, onChange) {
 
   trigger.addEventListener('click', (e) => {
     e.stopPropagation();
-    state.open = !state.open;
-    el.classList.toggle('open', state.open);
+    setOpen(!state.open);
+  });
+  trigger.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      setOpen(false);
+      trigger.focus();
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setOpen(true);
+      const first = items.querySelector('input');
+      if (first) first.focus();
+    }
   });
   document.addEventListener('click', (e) => {
-    if (!el.contains(e.target)) { state.open = false; el.classList.remove('open'); }
+    if (!el.contains(e.target)) setOpen(false);
+  });
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { setOpen(false); trigger.focus(); }
   });
 
   return {
     setOptions(options) {
       state.options = options;
       state.values = state.values.filter((v) => options.some((o) => o.value === v));
+      render();
+    },
+    setValues(values) {
+      state.values = values.slice();
       render();
     },
     getValues() { return state.values.slice(); },
@@ -253,12 +304,12 @@ const CONN_PAGE = 50;
 const CONN_MAX = 1000;
 let connLimit = CONN_PAGE;
 
-const connProtocolMS = multiSelect(document.getElementById('conn-protocol'), '全部协议', () => { connLimit = CONN_PAGE; refreshConnections().catch(() => {}); });
-const connUserMS = multiSelect(document.getElementById('conn-user'), '全部用户', () => { connLimit = CONN_PAGE; refreshConnections().catch(() => {}); });
-const connStatusMS = multiSelect(document.getElementById('conn-status'), '全部状态', () => { connLimit = CONN_PAGE; refreshConnections().catch(() => {}); });
-const histProtocolMS = multiSelect(document.getElementById('hist-protocol'), '全部协议', () => { refreshHistory().catch(() => {}); });
-const histUserMS = multiSelect(document.getElementById('hist-user'), '全部用户', () => { refreshHistory().catch(() => {}); });
-const chartUserMS = multiSelect(document.getElementById('chart-user'), '全部用户', () => { refreshChart().catch(() => {}); });
+const connProtocolMS = multiSelect(document.getElementById('conn-protocol'), '全部协议', () => { connLimit = CONN_PAGE; refreshConnections().catch(() => {}); persistState(); });
+const connUserMS = multiSelect(document.getElementById('conn-user'), '全部用户', () => { connLimit = CONN_PAGE; refreshConnections().catch(() => {}); persistState(); });
+const connStatusMS = multiSelect(document.getElementById('conn-status'), '全部状态', () => { connLimit = CONN_PAGE; refreshConnections().catch(() => {}); persistState(); });
+const histProtocolMS = multiSelect(document.getElementById('hist-protocol'), '全部协议', () => { refreshHistory().catch(() => {}); persistState(); });
+const histUserMS = multiSelect(document.getElementById('hist-user'), '全部用户', () => { refreshHistory().catch(() => {}); persistState(); });
+const chartUserMS = multiSelect(document.getElementById('chart-user'), '全部用户', () => { refreshChart().catch(() => {}); persistState(); });
 
 connStatusMS.setOptions([
   { value: 'direct', label: '直连' },
@@ -290,6 +341,9 @@ async function refreshConnections() {
   const data = await fetchJSON('api/connections?' + connQueryParams().join('&'));
   const tbody = document.querySelector('#conn-table tbody');
   tbody.innerHTML = '';
+  if (!data.connections.length) {
+    renderEmptyRow(tbody, 6, '暂无连接记录');
+  }
   for (const c of data.connections) {
     const tr = document.createElement('tr');
     tr.innerHTML =
@@ -342,6 +396,9 @@ async function refreshHistory() {
   const tbody = document.querySelector('#hist-table tbody');
   tbody.innerHTML = '';
   const users = sortRows(data.users || [], histSortVal, histSort);
+  if (!users.length) {
+    renderEmptyRow(tbody, 5, '该时间范围内暂无数据');
+  }
   for (const u of users) {
     const tr = document.createElement('tr');
     tr.innerHTML =
@@ -367,6 +424,32 @@ function shortName(s) {
   return s.length > 12 ? s.slice(0, 12) + '…' : s;
 }
 
+function appendSrTable(el, headers, rows) {
+  const table = document.createElement('table');
+  table.className = 'sr-only';
+  const thead = document.createElement('thead');
+  const htr = document.createElement('tr');
+  for (const h of headers) {
+    const th = document.createElement('th');
+    th.textContent = h;
+    htr.appendChild(th);
+  }
+  thead.appendChild(htr);
+  table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  for (const cells of rows) {
+    const tr = document.createElement('tr');
+    for (const c of cells) {
+      const td = document.createElement('td');
+      td.textContent = c;
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  el.appendChild(table);
+}
+
 // drawHistoryChart renders a per-user comparison bar chart for the selected
 // range: x-axis is users, y-axis is traffic, stacked by protocol.
 function drawHistoryChart(users) {
@@ -390,6 +473,14 @@ function drawHistoryChart(users) {
     byUser.get(name).push(u);
   }
   const names = [...byUser.keys()].sort();
+
+  const srRows = [];
+  for (const name of names) {
+    for (const u of byUser.get(name)) {
+      srRows.push([name, protoLabel(u.protocol), fmtBytes(u.uplink + u.downlink)]);
+    }
+  }
+  appendSrTable(el, ['用户', '协议', '流量'], srRows);
 
   const svgNS = 'http://www.w3.org/2000/svg';
   const maxBarW = 140;
@@ -546,6 +637,9 @@ function monotoneSmooth(points) {
 
 function linePath(points) {
   if (!points.length) return '';
+  if (prefersReducedMotion) {
+    return points.map((p, i) => (i === 0 ? 'M' : 'L') + p.x + ' ' + p.y).join(' ');
+  }
   return `M ${points[0].x} ${points[0].y}` + monotoneSmooth(points);
 }
 
@@ -568,6 +662,9 @@ function drawChart(buckets) {
   const bw = plotW / buckets.length;
   const barCenter = (i) => margin.left + i * bw + bw / 2;
   const hourOf = (i) => new Date(buckets[i].hour * 1000).getHours();
+
+  const srRows = buckets.map((b) => [fmtHourLabel(b.hour), fmtBytes(b.up), fmtBytes(b.down), fmtBytes(b.up + b.down)]);
+  appendSrTable(el, ['时间', '上行', '下行', '总计'], srRows);
 
   const svg = document.createElementNS(svgNS, 'svg');
   svg.setAttribute('width', width);
@@ -706,7 +803,7 @@ function drawChart(buckets) {
   tooltip.style.display = 'none';
   el.appendChild(tooltip);
 
-  const setTip = (i) => {
+  const setTip = (i, keyFocus) => {
     if (i == null || i < 0 || i >= buckets.length) {
       tooltip.style.display = 'none';
       guide.setAttribute('visibility', 'hidden');
@@ -722,12 +819,16 @@ function drawChart(buckets) {
       `<div style="color:#5aa2ff">下行 ${fmtBytes(b.down)}</div>` +
       `<div>总计 ${fmtBytes(b.up + b.down)}</div>`;
     tooltip.style.display = 'block';
+    if (keyFocus) {
+      tooltip.style.left = (barCenter(i) + margin.left) + 'px';
+      tooltip.style.top = margin.top + 'px';
+    }
   };
 
   svg.addEventListener('mousemove', (e) => {
     const sRect = svg.getBoundingClientRect();
     const i = Math.floor((e.clientX - sRect.left - margin.left) / bw);
-    setTip(i);
+    setTip(i, false);
     const eRect = el.getBoundingClientRect();
     let tx = e.clientX - eRect.left + 14;
     let ty = e.clientY - eRect.top + 14;
@@ -738,6 +839,25 @@ function drawChart(buckets) {
     if (ty + tRect.height > eRect.height) tooltip.style.top = (ty - tRect.height - 28) + 'px';
   });
   svg.addEventListener('mouseleave', () => setTip(null));
+
+  // 键盘可聚焦数据点（仅 24 小时视图，避免过长 Tab 序列；更大范围由 sr-only 表格提供）
+  if (buckets.length <= 24) {
+    buckets.forEach((b, i) => {
+      const hit = document.createElementNS(svgNS, 'rect');
+      hit.setAttribute('x', margin.left + i * bw);
+      hit.setAttribute('y', margin.top);
+      hit.setAttribute('width', Math.max(bw, 1));
+      hit.setAttribute('height', plotH);
+      hit.setAttribute('fill', 'transparent');
+      hit.setAttribute('tabindex', '0');
+      hit.setAttribute('role', 'img');
+      hit.setAttribute('aria-label',
+        `${fmtHourLabel(b.hour)} 上行 ${fmtBytes(b.up)}，下行 ${fmtBytes(b.down)}，总计 ${fmtBytes(b.up + b.down)}`);
+      hit.addEventListener('focus', () => setTip(i, true));
+      hit.addEventListener('blur', () => setTip(null));
+      svg.appendChild(hit);
+    });
+  }
 }
 
 function axisText(svgNS, content, x, y, anchor) {
@@ -782,12 +902,6 @@ function titleEl(svgNS, content) {
   const t = document.createElementNS(svgNS, 'title');
   t.textContent = content;
   return t;
-}
-
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-  }[c]));
 }
 
 // ---- 用户配置页 ----
@@ -840,6 +954,8 @@ function toast(msg) {
   if (!t) {
     t = document.createElement('div');
     t.id = 'toast';
+    t.setAttribute('role', 'status');
+    t.setAttribute('aria-live', 'polite');
     document.body.appendChild(t);
   }
   t.textContent = msg;
@@ -921,25 +1037,121 @@ async function refreshConfigs() {
   renderConfigs();
 }
 
+// ---- URL 状态同步 ----
+let currentPage = 'dashboard';
+
+function parseUrlState() {
+  const raw = location.hash || '';
+  const m = raw.match(/^#\/([^?]*)(\?(.*))?$/);
+  const page = (m && m[1]) || 'dashboard';
+  const params = new URLSearchParams(m && m[3] ? m[3] : '');
+  return { page, params };
+}
+
+function writeArr(params, key, arr) {
+  params.delete(key);
+  for (const v of arr) params.append(key, v);
+}
+
+function collectParams() {
+  const params = new URLSearchParams();
+  params.set('osort', overviewSort.key);
+  params.set('odir', overviewSort.dir);
+  params.set('hours', document.getElementById('chart-hours').value);
+  writeArr(params, 'cuser', chartUserMS.getValues());
+  writeArr(params, 'cproto', connProtocolMS.getValues());
+  writeArr(params, 'connuser', connUserMS.getValues());
+  writeArr(params, 'connstatus', connStatusMS.getValues());
+  params.set('hrange', document.getElementById('hist-range').value);
+  const hf = document.getElementById('hist-from').value;
+  const ht = document.getElementById('hist-to').value;
+  if (hf) params.set('hfrom', hf);
+  if (ht) params.set('hto', ht);
+  writeArr(params, 'hproto', histProtocolMS.getValues());
+  writeArr(params, 'huser', histUserMS.getValues());
+  params.set('hsort', histSort.key);
+  params.set('hdir', histSort.dir);
+  if (configSearch) params.set('search', configSearch);
+  if (configProto) params.set('proto', configProto);
+  return params;
+}
+
+function persistState() {
+  const params = collectParams();
+  const newHash = '#/' + currentPage + (params.toString() ? '?' + params.toString() : '');
+  if (location.hash !== newHash) {
+    history.replaceState(null, '', newHash);
+  }
+}
+
 function showPage(page) {
+  currentPage = page;
   document.getElementById('page-dashboard').hidden = page !== 'dashboard';
   document.getElementById('page-configs').hidden = page !== 'configs';
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.page === page));
   document.getElementById('footer-note').textContent =
     page === 'configs' ? '配置数据按需读取，点击「刷新」获取最新' : '数据每 15 秒自动刷新';
-  if (page === 'configs' && !configsLoaded) refreshConfigs().catch(() => {});
+}
+
+async function ensureConfigs() {
+  if (!configsLoaded) await refreshConfigs();
+  renderConfigs();
+}
+
+function applyUrlState() {
+  const { page, params } = parseUrlState();
+  showPage(page);
+
+  const sk = params.get('osort');
+  if (sk) overviewSort = { key: sk, dir: params.get('odir') === 'asc' ? 'asc' : 'desc' };
+
+  const hours = params.get('hours');
+  if (hours) document.getElementById('chart-hours').value = hours;
+  chartUserMS.setValues(params.getAll('cuser'));
+
+  connProtocolMS.setValues(params.getAll('cproto'));
+  connUserMS.setValues(params.getAll('connuser'));
+  connStatusMS.setValues(params.getAll('connstatus'));
+
+  const hrange = params.get('hrange');
+  if (hrange) document.getElementById('hist-range').value = hrange;
+  document.getElementById('hist-from').value = params.get('hfrom') || '';
+  document.getElementById('hist-to').value = params.get('hto') || '';
+  document.getElementById('hist-custom').style.display = hrange === 'custom' ? 'inline' : 'none';
+  histProtocolMS.setValues(params.getAll('hproto'));
+  histUserMS.setValues(params.getAll('huser'));
+  const hsk = params.get('hsort');
+  if (hsk) histSort = { key: hsk, dir: params.get('hdir') === 'asc' ? 'asc' : 'desc' };
+
+  const search = params.get('search');
+  if (search != null) {
+    configSearch = search;
+    document.getElementById('config-search').value = search;
+  }
+  configProto = params.get('proto') || '';
+  document.querySelectorAll('#config-proto .seg-btn').forEach((x) => x.classList.toggle('active', x.dataset.proto === configProto));
+
+  refreshOverview().catch(() => {});
+  refreshConnections().catch(() => {});
+  refreshChart().catch(() => {});
+  refreshHistory().catch(() => {});
+  if (page === 'configs') ensureConfigs().catch(() => {});
 }
 
 async function bootstrap() {
   const ov = await fetchJSON('api/overview');
   buildFilters(ov.users);
-  await refreshOverview();
-  await refreshConnections();
-  await refreshChart();
-  await refreshHistory();
+  applyUrlState();
 }
 
-document.getElementById('chart-hours').addEventListener('change', refreshChart);
+function switchPage(page) {
+  const params = collectParams();
+  history.pushState(null, '', '#/' + page + (params.toString() ? '?' + params.toString() : ''));
+  showPage(page);
+  if (page === 'configs') ensureConfigs().catch(() => {});
+}
+
+document.getElementById('chart-hours').addEventListener('change', () => { refreshChart().catch(() => {}); persistState(); });
 document.getElementById('conn-more').addEventListener('click', () => {
   connLimit = Math.min(connLimit + CONN_PAGE, CONN_MAX);
   refreshConnections().catch(() => {});
@@ -948,16 +1160,20 @@ document.getElementById('hist-range').addEventListener('change', () => {
   document.getElementById('hist-custom').style.display =
     document.getElementById('hist-range').value === 'custom' ? 'inline' : 'none';
   refreshHistory().catch(() => {});
+  persistState();
 });
 document.getElementById('hist-from').addEventListener('change', () => {
   refreshHistory().catch(() => {});
+  persistState();
 });
 document.getElementById('hist-to').addEventListener('change', () => {
   refreshHistory().catch(() => {});
+  persistState();
 });
 document.getElementById('clear-chart-filters').addEventListener('click', () => {
   chartUserMS.clear();
   refreshChart().catch(() => {});
+  persistState();
 });
 document.getElementById('clear-conn-filters').addEventListener('click', () => {
   connProtocolMS.clear();
@@ -965,6 +1181,7 @@ document.getElementById('clear-conn-filters').addEventListener('click', () => {
   connStatusMS.clear();
   connLimit = CONN_PAGE;
   refreshConnections().catch(() => {});
+  persistState();
 });
 document.getElementById('clear-hist-filters').addEventListener('click', () => {
   histProtocolMS.clear();
@@ -972,12 +1189,17 @@ document.getElementById('clear-hist-filters').addEventListener('click', () => {
   document.getElementById('hist-range').value = '7';
   document.getElementById('hist-custom').style.display = 'none';
   refreshHistory().catch(() => {});
+  persistState();
 });
 
 setupSortable('users-table', overviewSort, () => { refreshOverview().catch(() => {}); });
 setupSortable('hist-table', histSort, () => { refreshHistory().catch(() => {}); });
 
-document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => showPage(t.dataset.page)));
+document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', (e) => {
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+  e.preventDefault();
+  switchPage(t.dataset.page);
+}));
 document.getElementById('config-refresh').addEventListener('click', () => {
   const btn = document.getElementById('config-refresh');
   btn.disabled = true;
@@ -996,6 +1218,7 @@ document.getElementById('config-copy-all').addEventListener('click', () => {
 document.getElementById('config-search').addEventListener('input', (e) => {
   configSearch = e.target.value;
   renderConfigs();
+  persistState();
 });
 document.getElementById('logout-btn').addEventListener('click', async () => {
   try { await fetch('api/logout', { method: 'POST', cache: 'no-store' }); } catch (_) {}
@@ -1005,7 +1228,10 @@ document.querySelectorAll('#config-proto .seg-btn').forEach((b) => b.addEventLis
   configProto = b.dataset.proto;
   document.querySelectorAll('#config-proto .seg-btn').forEach((x) => x.classList.toggle('active', x === b));
   renderConfigs();
+  persistState();
 }));
+
+window.addEventListener('hashchange', () => applyUrlState());
 
 let resizeTimer;
 window.addEventListener('resize', () => {
@@ -1016,7 +1242,17 @@ window.addEventListener('resize', () => {
   }, 200);
 });
 
-setInterval(() => { refreshOverview().catch(() => {}); refreshConnections().catch(() => {}); }, 15000);
+function shouldSkipAutoRefresh() {
+  const ae = document.activeElement;
+  if (!ae) return false;
+  return ae.matches('input, select, textarea, .ms-trigger');
+}
+
+setInterval(() => {
+  if (shouldSkipAutoRefresh()) return;
+  refreshOverview().catch(() => {});
+  refreshConnections().catch(() => {});
+}, 15000);
 
 bootstrap().catch(() => {
   document.body.innerHTML = '<div style="padding:40px;text-align:center;color:#8a96a3">面板加载失败，请稍后重试</div>';
