@@ -56,7 +56,7 @@ function statusBadge(s) {
     rejected: { cls: 'blocked', label: '拒绝' },
   };
   const m = map[s] || { cls: '', label: escapeHtml(s) };
-  return `<span class="badge ${m.cls}">${m.label}</span>`;
+  return `<span class="badge dot ${m.cls}">${m.label}</span>`;
 }
 
 function escapeHtml(s) {
@@ -150,13 +150,33 @@ function renderEmptyRow(tbody, colspan, msg) {
   tbody.appendChild(tr);
 }
 
+let overviewInitialized = false;
+
+function setKpiValue(el, value, fmt) {
+  if (overviewInitialized || prefersReducedMotion) {
+    el.textContent = fmt(value);
+    return;
+  }
+  const start = performance.now();
+  const dur = 520;
+  function frame(now) {
+    const p = Math.min(1, (now - start) / dur);
+    const eased = 1 - Math.pow(1 - p, 3);
+    el.textContent = fmt(value * eased);
+    if (p < 1) requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+}
+
 async function refreshOverview() {
   const data = await fetchJSON('api/overview');
-  document.getElementById('kpi-up').textContent = fmtBytes(data.total_up);
-  document.getElementById('kpi-down').textContent = fmtBytes(data.total_down);
-  document.getElementById('kpi-total').textContent = fmtBytes((data.total_up || 0) + (data.total_down || 0));
-  document.getElementById('kpi-users').textContent = data.users.length;
+  setKpiValue(document.getElementById('kpi-up'), data.total_up || 0, fmtBytes);
+  setKpiValue(document.getElementById('kpi-down'), data.total_down || 0, fmtBytes);
+  setKpiValue(document.getElementById('kpi-total'), (data.total_up || 0) + (data.total_down || 0), fmtBytes);
+  setKpiValue(document.getElementById('kpi-users'), data.users.length, (n) => String(Math.round(n)));
   document.getElementById('kpi-online').textContent = `在线 ${data.users.filter((u) => u.online).length}`;
+  overviewInitialized = true;
+  document.querySelectorAll('.skeleton').forEach((el) => el.classList.remove('skeleton'));
 
   const tbody = document.querySelector('#users-table tbody');
   tbody.innerHTML = '';
@@ -173,7 +193,7 @@ async function refreshOverview() {
       `<td class="mono">${fmtBytes(u.downlink)}</td>` +
       `<td class="mono">${fmtBytes(u.total)}</td>` +
       `<td class="mono">${fmtBytes(u.lifetime_total)}</td>` +
-      `<td><span class="badge ${u.online ? 'online' : ''}">${u.online ? '在线' : '离线'}</span></td>` +
+      `<td><span class="badge dot ${u.online ? 'online' : 'offline'}">${u.online ? '在线' : '离线'}</span></td>` +
       `<td class="mono">${fmtTime(u.last_seen)}</td>`;
     tbody.appendChild(tr);
   }
@@ -1072,6 +1092,25 @@ async function refreshConfigs() {
 let currentPage = 'dashboard';
 let currentSubtab = 'conn';
 
+function syncIndicator(containerSel, activeSel) {
+  const c = document.querySelector(containerSel);
+  if (!c) return;
+  const active = c.querySelector(activeSel);
+  const ind = c.querySelector('.indicator');
+  if (!ind || !active) return;
+  const cr = c.getBoundingClientRect();
+  const ar = active.getBoundingClientRect();
+  ind.style.width = ar.width + 'px';
+  ind.style.height = ar.height + 'px';
+  ind.style.transform = `translate(${ar.left - cr.left}px, ${ar.top - cr.top}px)`;
+}
+
+function syncAllIndicators() {
+  syncIndicator('.tabs', '.tab.active');
+  syncIndicator('.sub-tabs', '.sub-tab.active');
+  syncIndicator('.seg', '.seg-btn.active');
+}
+
 function showSubtab(key) {
   currentSubtab = key === 'hist' ? 'hist' : 'conn';
   document.getElementById('view-conn').hidden = currentSubtab !== 'conn';
@@ -1081,6 +1120,7 @@ function showSubtab(key) {
     t.classList.toggle('active', active);
     t.setAttribute('aria-selected', String(active));
   });
+  syncIndicator('.sub-tabs', '.sub-tab.active');
   if (currentSubtab === 'hist' && lastHistUsers.length) {
     drawHistoryChart(lastHistUsers);
   }
@@ -1138,6 +1178,7 @@ function showPage(page) {
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.page === page));
   document.getElementById('footer-note').textContent =
     page === 'configs' ? '配置数据按需读取，点击「刷新」获取最新' : '数据每 15 秒自动刷新';
+  syncAllIndicators();
 }
 
 async function ensureConfigs() {
@@ -1279,6 +1320,7 @@ document.getElementById('logout-btn').addEventListener('click', async () => {
 document.querySelectorAll('#config-proto .seg-btn').forEach((b) => b.addEventListener('click', () => {
   configProto = b.dataset.proto;
   document.querySelectorAll('#config-proto .seg-btn').forEach((x) => x.classList.toggle('active', x === b));
+  syncIndicator('.seg', '.seg-btn.active');
   renderConfigs();
   persistState();
 }));
@@ -1289,10 +1331,13 @@ let resizeTimer;
 window.addEventListener('resize', () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
+    syncAllIndicators();
     refreshChart().catch(() => {});
     drawHistoryChart(lastHistUsers);
   }, 200);
 });
+
+window.addEventListener('load', () => syncAllIndicators());
 
 function shouldSkipAutoRefresh() {
   const ae = document.activeElement;

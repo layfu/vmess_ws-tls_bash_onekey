@@ -3,41 +3,87 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#0f1216">
+<meta name="theme-color" content="#0a0c0f">
 <title>流量面板</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<a class="skip-link" href="#main">跳到主内容</a>
-<header>
-  <h1>流量面板</h1>
-  <button id="logout-btn" class="btn ghost">退出登录</button>
-</header>
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="i-up" viewBox="0 0 24 24">
+    <path d="M12 19V5M6 11l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-down" viewBox="0 0 24 24">
+    <path d="M12 5v14M6 13l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-total" viewBox="0 0 24 24">
+    <path d="M6 20V13M12 20V6M18 20v-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="i-users" viewBox="0 0 24 24">
+    <circle cx="9" cy="8" r="3.5" fill="none" stroke="currentColor" stroke-width="2"/>
+    <path d="M3.5 20a5.5 5.5 0 0 1 11 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="i-logout" viewBox="0 0 24 24">
+    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+</svg>
 
-<nav class="tabs" aria-label="主要导航">
-  <a class="tab active" href="#/dashboard" data-page="dashboard">仪表盘</a>
-  <a class="tab" href="#/configs" data-page="configs">配置</a>
-</nav>
+<a class="skip-link" href="#main">跳到主内容</a>
+
+<header>
+  <div class="brand">
+    <span class="logo" aria-hidden="true">
+      <svg viewBox="0 0 24 24">
+        <defs>
+          <linearGradient id="logo-g" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#5b8cff"/>
+            <stop offset="1" stop-color="#3ecf9b"/>
+          </linearGradient>
+        </defs>
+        <rect width="24" height="24" rx="7" fill="url(#logo-g)"/>
+        <path d="M7 15V9M12 15V5M17 15v-4" stroke="#fff" stroke-width="2" stroke-linecap="round" fill="none"/>
+      </svg>
+    </span>
+    <span class="brand-name">流量面板</span>
+  </div>
+
+  <nav class="tabs" aria-label="主要导航">
+    <span class="indicator" aria-hidden="true"></span>
+    <a class="tab active" href="#/dashboard" data-page="dashboard">仪表盘</a>
+    <a class="tab" href="#/configs" data-page="configs">配置</a>
+  </nav>
+
+  <div class="header-actions">
+    <span class="live-chip"><span class="live-dot" aria-hidden="true"></span>实时刷新</span>
+    <button id="logout-btn" class="btn ghost">
+      <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-logout"/></svg>
+      退出登录
+    </button>
+  </div>
+</header>
 
 <main id="main" tabindex="-1">
 <div id="page-dashboard">
   <section class="kpi-grid" aria-label="概览统计">
     <div class="kpi-card up">
+      <span class="kpi-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#i-up"/></svg></span>
       <span class="kpi-label">当月上行</span>
-      <span class="kpi-value" id="kpi-up">—</span>
+      <span class="kpi-value skeleton" id="kpi-up">—</span>
     </div>
     <div class="kpi-card down">
+      <span class="kpi-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#i-down"/></svg></span>
       <span class="kpi-label">当月下行</span>
-      <span class="kpi-value" id="kpi-down">—</span>
+      <span class="kpi-value skeleton" id="kpi-down">—</span>
     </div>
     <div class="kpi-card total">
+      <span class="kpi-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#i-total"/></svg></span>
       <span class="kpi-label">当月总量</span>
-      <span class="kpi-value" id="kpi-total">—</span>
+      <span class="kpi-value skeleton" id="kpi-total">—</span>
     </div>
     <div class="kpi-card users">
+      <span class="kpi-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#i-users"/></svg></span>
       <span class="kpi-label">用户数</span>
-      <span class="kpi-value" id="kpi-users">—</span>
-      <span class="kpi-sub" id="kpi-online">在线 —</span>
+      <span class="kpi-value skeleton" id="kpi-users">—</span>
+      <span class="kpi-sub skeleton" id="kpi-online">在线 —</span>
     </div>
   </section>
 
@@ -53,7 +99,7 @@
       </select>
       <button id="clear-chart-filters" class="btn ghost">清除</button>
     </div>
-    <div id="chart" role="img" aria-label="上行与下行流量趋势图"></div>
+    <div id="chart" role="img" aria-label="上行与下行流量趋势图"><span class="chart-skeleton" aria-hidden="true"></span></div>
   </section>
 
   <section class="card">
@@ -73,13 +119,20 @@
             <th class="sortable" aria-sort="none"><button class="sort-btn" data-sort="last_seen">最近活跃<span class="sort-arrow"></span></button></th>
           </tr>
         </thead>
-        <tbody></tbody>
+        <tbody>
+          <tr><td colspan="8"><span class="skeleton" style="height:14px;width:92%;display:block"></span></td></tr>
+          <tr><td colspan="8"><span class="skeleton" style="height:14px;width:84%;display:block"></span></td></tr>
+          <tr><td colspan="8"><span class="skeleton" style="height:14px;width:88%;display:block"></span></td></tr>
+          <tr><td colspan="8"><span class="skeleton" style="height:14px;width:78%;display:block"></span></td></tr>
+          <tr><td colspan="8"><span class="skeleton" style="height:14px;width:90%;display:block"></span></td></tr>
+        </tbody>
       </table>
     </div>
   </section>
 
   <section class="card">
     <nav class="sub-tabs" role="tablist" aria-label="明细视图">
+      <span class="indicator" aria-hidden="true"></span>
       <button class="sub-tab active" id="subtab-conn" data-subtab="conn" role="tab" aria-selected="true" aria-controls="view-conn">最近连接</button>
       <button class="sub-tab" id="subtab-hist" data-subtab="hist" role="tab" aria-selected="false" aria-controls="view-hist">历史统计</button>
     </nav>
@@ -164,6 +217,7 @@
       <label class="sr-only" for="config-search">搜索用户名</label>
       <input type="text" id="config-search" placeholder="搜索用户名…" autocomplete="off" spellcheck="false">
       <div class="seg" id="config-proto" role="group" aria-label="按协议筛选">
+        <span class="indicator" aria-hidden="true"></span>
         <button class="seg-btn active" data-proto="">全部</button>
         <button class="seg-btn" data-proto="vmess">VMess</button>
         <button class="seg-btn" data-proto="anytls">AnyTLS</button>
