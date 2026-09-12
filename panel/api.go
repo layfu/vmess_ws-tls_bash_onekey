@@ -209,10 +209,10 @@ func buildTopology(rows []connGraphRow) ([]topoNode, []topoLink, map[string]int6
 	var total int64
 
 	for _, r := range rows {
-		user := r.Username
-		if user == "" {
-			user = "未知用户"
+		if r.Username == "" {
+			continue
 		}
+		user := r.Username
 		status := r.Status
 		if status == "" {
 			status = "unknown"
@@ -333,10 +333,10 @@ func buildTopology(rows []connGraphRow) ([]topoNode, []topoLink, map[string]int6
 	}
 	pathSets := map[string]map[int]bool{}
 	for _, r := range rows {
-		user := r.Username
-		if user == "" {
-			user = "未知用户"
+		if r.Username == "" {
+			continue
 		}
+		user := r.Username
 		status := r.Status
 		if status == "" {
 			status = "unknown"

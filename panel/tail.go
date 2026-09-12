@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"io"
 	"log"
+	"net"
+	"net/netip"
 	"os"
 	"regexp"
 	"strings"
@@ -46,10 +48,28 @@ func parseV2rayLine(line string) (protocol, username, source, target, status str
 	if target == "" {
 		return "", "", "", "", "", ts, false
 	}
+	status = m[5]
+	// 面板自身轮询统计接口会连到 v2ray 的 api inbound，日志形如
+	// "127.0.0.1:xxx accepted tcp:127.0.0.1:0 [api]"，没有 email；这类内部
+	// 连接不是真实用户流量，丢弃以免污染「最近连接」和路由拓扑。
+	if status == "api" || isLoopbackTarget(target) {
+		return "", "", "", "", "", ts, false
+	}
 	if em := v2rayEmailRe.FindStringSubmatch(line); em != nil {
 		username = em[1]
 	}
-	return "vmess", username, source, target, m[5], ts, true
+	return "vmess", username, source, target, status, ts, true
+}
+
+// isLoopbackTarget reports whether the target host is a loopback address.
+func isLoopbackTarget(target string) bool {
+	host := target
+	if h, _, err := net.SplitHostPort(target); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	ip, err := netip.ParseAddr(host)
+	return err == nil && ip.IsLoopback()
 }
 
 // parseV2rayTime parses the v2ray access log timestamp "2006/01/02 15:04:05"

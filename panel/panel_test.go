@@ -80,6 +80,16 @@ func TestParseV2rayLine(t *testing.T) {
 	if _, _, _, _, _, _, ok := parseV2rayLine(rej); ok {
 		t.Errorf("rejected line should not be accepted")
 	}
+
+	// 面板自身轮询统计接口产生的内部连接：无 email、tag 为 api、目标是回环。
+	api := "2026/09/12 17:18:55 127.0.0.1:36464 accepted tcp:127.0.0.1:0 [api]"
+	if _, _, _, _, _, _, ok := parseV2rayLine(api); ok {
+		t.Errorf("api inbound line should be skipped")
+	}
+	loopback := "2026/09/12 17:18:55 127.0.0.1:36464 accepted tcp:127.0.0.1:8080 [direct]"
+	if _, _, _, _, _, _, ok := parseV2rayLine(loopback); ok {
+		t.Errorf("loopback target should be skipped")
+	}
 }
 
 func TestParseNginxWsLine(t *testing.T) {
@@ -268,21 +278,20 @@ func TestBuildTopology(t *testing.T) {
 		{Username: "alice", Protocol: "vmess", Status: "direct", Target: "example.com:443", Count: 5},
 		{Username: "alice", Protocol: "vmess", Status: "warp", Target: "video.com:443", Count: 2},
 		{Username: "bob", Protocol: "anytls", Status: "blocked", Target: "ads.com:443", Count: 3},
-		{Username: "", Protocol: "anytls", Status: "", Target: "example.com:443", Count: 1},
 	}
 	nodes, links, totals, userPaths := buildTopology(rows)
 
-	if totals["direct"] != 5 || totals["warp"] != 2 || totals["blocked"] != 3 || totals["unknown"] != 1 {
+	if totals["direct"] != 5 || totals["warp"] != 2 || totals["blocked"] != 3 {
 		t.Errorf("totals = %+v", totals)
 	}
-	if len(nodes) != 3+2+1+4+3 { // users + protocols + server + statuses + targets
-		t.Errorf("expected 13 nodes, got %d: %+v", len(nodes), nodes)
+	if len(nodes) != 2+2+1+3+3 { // users + protocols + server + statuses + targets
+		t.Errorf("expected 11 nodes, got %d: %+v", len(nodes), nodes)
 	}
 	byID := map[string]topoNode{}
 	for _, n := range nodes {
 		byID[n.ID] = n
 	}
-	if n := byID["srv"]; n.Kind != "server" || n.Count != 11 {
+	if n := byID["srv"]; n.Kind != "server" || n.Count != 10 {
 		t.Errorf("server node = %+v", n)
 	}
 	if n := byID["user:alice"]; n.Count != 7 {
@@ -291,11 +300,11 @@ func TestBuildTopology(t *testing.T) {
 	if n := byID["out:direct"]; n.Label != "直连" || n.Count != 5 {
 		t.Errorf("direct node = %+v", n)
 	}
-	if n := byID["target:example.com"]; n.Count != 6 {
+	if n := byID["target:example.com"]; n.Count != 5 {
 		t.Errorf("example.com node = %+v", n)
 	}
-	if n := byID["user:未知用户"]; n.Count != 1 {
-		t.Errorf("unknown user node = %+v", n)
+	if _, ok := byID["user:未知用户"]; ok {
+		t.Errorf("unknown user should not appear: %+v", nodes)
 	}
 
 	linkByKey := map[string]int64{}
@@ -333,6 +342,25 @@ func TestBuildTopology(t *testing.T) {
 	}
 	if bob["srv->out:direct"] || bob["out:direct->target:example.com"] {
 		t.Errorf("bob path unexpectedly includes direct route: %+v", bob)
+	}
+}
+
+func TestBuildTopologySkipsUnknownUser(t *testing.T) {
+	rows := []connGraphRow{
+		{Username: "alice", Protocol: "vmess", Status: "direct", Target: "example.com:443", Count: 5},
+		{Username: "", Protocol: "vmess", Status: "api", Target: "127.0.0.1:0", Count: 3},
+	}
+	nodes, _, totals, userPaths := buildTopology(rows)
+	if totals["api"] != 0 || totals["direct"] != 5 {
+		t.Errorf("totals = %+v", totals)
+	}
+	for _, n := range nodes {
+		if n.ID == "user:未知用户" || n.ID == "target:127.0.0.1" {
+			t.Errorf("internal connection leaked into topology: %+v", n)
+		}
+	}
+	if _, ok := userPaths["user:未知用户"]; ok {
+		t.Errorf("unknown user path should be absent")
 	}
 }
 
