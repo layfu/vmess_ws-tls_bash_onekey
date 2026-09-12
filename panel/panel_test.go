@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -233,7 +234,7 @@ func TestMonthlyTotals(t *testing.T) {
 	}
 }
 
-func TestConnectionStats(t *testing.T) {
+func TestConnectionGraph(t *testing.T) {
 	st, err := openStore(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -241,24 +242,114 @@ func TestConnectionStats(t *testing.T) {
 	defer st.Close()
 
 	now := time.Now()
-	_ = st.addConnection("vmess", "a", "1.1.1.1:1", "x:443", "direct", now)
-	_ = st.addConnection("vmess", "b", "1.1.1.1:2", "y:443", "warp", now)
-	_ = st.addConnection("vmess", "c", "1.1.1.1:1", "z:443", "direct", now)
-	_ = st.addConnection("vmess", "d", "2.2.2.2:1", "old:443", "direct", now.Add(-48*time.Hour))
+	_ = st.addConnection("vmess", "a", "1.1.1.1:1", "example.com:443", "direct", now)
+	_ = st.addConnection("vmess", "a", "1.1.1.1:2", "example.com:443", "direct", now)
+	_ = st.addConnection("anytls", "b", "2.2.2.2:1", "video.com:443", "warp", now)
+	_ = st.addConnection("vmess", "c", "3.3.3.3:1", "old.com:443", "direct", now.Add(-48*time.Hour))
 
-	rows, err := st.connectionStats(now.Add(-time.Hour).Unix())
+	rows, err := st.connectionGraph(now.Add(-time.Hour).Unix())
 	if err != nil {
 		t.Fatal(err)
 	}
 	counts := map[string]int64{}
 	for _, r := range rows {
-		counts[r.Source+"|"+r.Status] = r.Count
+		counts[r.Username+"|"+r.Protocol+"|"+r.Status+"|"+r.Target] = r.Count
 	}
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 grouped rows, got %d: %+v", len(rows), rows)
 	}
-	if counts["1.1.1.1:1|direct"] != 2 || counts["1.1.1.1:2|warp"] != 1 {
+	if counts["a|vmess|direct|example.com:443"] != 2 || counts["b|anytls|warp|video.com:443"] != 1 {
 		t.Errorf("counts = %+v", counts)
+	}
+}
+
+func TestBuildTopology(t *testing.T) {
+	rows := []connGraphRow{
+		{Username: "alice", Protocol: "vmess", Status: "direct", Target: "example.com:443", Count: 5},
+		{Username: "alice", Protocol: "vmess", Status: "warp", Target: "video.com:443", Count: 2},
+		{Username: "bob", Protocol: "anytls", Status: "blocked", Target: "ads.com:443", Count: 3},
+		{Username: "", Protocol: "anytls", Status: "", Target: "example.com:443", Count: 1},
+	}
+	nodes, links, totals := buildTopology(rows)
+
+	if totals["direct"] != 5 || totals["warp"] != 2 || totals["blocked"] != 3 || totals["unknown"] != 1 {
+		t.Errorf("totals = %+v", totals)
+	}
+	if len(nodes) != 3+2+1+4+3 { // users + protocols + server + statuses + targets
+		t.Errorf("expected 13 nodes, got %d: %+v", len(nodes), nodes)
+	}
+	byID := map[string]topoNode{}
+	for _, n := range nodes {
+		byID[n.ID] = n
+	}
+	if n := byID["srv"]; n.Kind != "server" || n.Count != 11 {
+		t.Errorf("server node = %+v", n)
+	}
+	if n := byID["user:alice"]; n.Count != 7 {
+		t.Errorf("alice node = %+v", n)
+	}
+	if n := byID["out:direct"]; n.Label != "直连" || n.Count != 5 {
+		t.Errorf("direct node = %+v", n)
+	}
+	if n := byID["target:example.com"]; n.Count != 6 {
+		t.Errorf("example.com node = %+v", n)
+	}
+	if n := byID["user:未知用户"]; n.Count != 1 {
+		t.Errorf("unknown user node = %+v", n)
+	}
+
+	linkByKey := map[string]int64{}
+	for _, l := range links {
+		linkByKey[l.Source+"->"+l.Target] = l.Count
+	}
+	if linkByKey["srv->out:direct"] != 5 || linkByKey["out:warp->target:video.com"] != 2 {
+		t.Errorf("links = %+v", links)
+	}
+}
+
+func TestBuildTopologyOtherBuckets(t *testing.T) {
+	var rows []connGraphRow
+	for i := 0; i < 12; i++ {
+		rows = append(rows, connGraphRow{
+			Username: fmt.Sprintf("u%02d", i),
+			Protocol: "vmess",
+			Status:   "direct",
+			Target:   fmt.Sprintf("t%02d.com:443", i),
+			Count:    int64(100 - i),
+		})
+	}
+	nodes, links, _ := buildTopology(rows)
+	byID := map[string]topoNode{}
+	for _, n := range nodes {
+		byID[n.ID] = n
+	}
+	if _, ok := byID["user:u00"]; !ok {
+		t.Errorf("top user missing")
+	}
+	if _, ok := byID["user:u11"]; ok {
+		t.Errorf("11th user should be merged into other")
+	}
+	if n, ok := byID["user:__other__"]; !ok || n.Label != "其他" {
+		t.Errorf("other user node = %+v ok=%v", n, ok)
+	}
+	if _, ok := byID["target:t11.com"]; ok {
+		t.Errorf("11th target should be merged into other")
+	}
+	if _, ok := byID["target:__other__"]; !ok {
+		t.Errorf("other target node missing")
+	}
+	// other buckets must still receive links
+	var hasOtherUserLink, hasOtherTargetLink bool
+	for _, l := range links {
+		if l.Source == "user:__other__" {
+			hasOtherUserLink = true
+		}
+		if l.Target == "target:__other__" {
+			hasOtherTargetLink = true
+		}
+	}
+	if !hasOtherUserLink || !hasOtherTargetLink {
+		t.Errorf("other buckets missing links: %+v", links)
 	}
 }
 

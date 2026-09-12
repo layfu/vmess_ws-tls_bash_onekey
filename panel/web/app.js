@@ -386,14 +386,14 @@ function updateConnMore(count) {
   btn.style.display = (connLimit < CONN_MAX && count >= connLimit) ? '' : 'none';
 }
 
-async function refreshGlobe() {
-  if (!window.PanelGlobe) return;
-  const data = await fetchJSON('api/routes?hours=24');
-  window.PanelGlobe.update(data);
+async function refreshTopology() {
+  if (!window.PanelTopology) return;
+  const data = await fetchJSON('api/topology?hours=24');
+  window.PanelTopology.update(data);
 }
 
-window.addEventListener('panel-globe-ready', () => {
-  refreshGlobe().catch(() => {});
+window.addEventListener('panel-topology-ready', () => {
+  refreshTopology().catch(() => {});
 });
 
 function histRange() {
@@ -1210,7 +1210,7 @@ function applyUrlState() {
 
   refreshOverview().catch(() => {});
   refreshConnections().catch(() => {});
-  refreshGlobe().catch(() => {});
+  refreshTopology().catch(() => {});
   refreshChart().catch(() => {});
   refreshHistory().catch(() => {});
   if (page === 'configs') ensureConfigs().catch(() => {});
@@ -1338,7 +1338,7 @@ setInterval(() => {
   if (shouldSkipAutoRefresh()) return;
   refreshOverview().catch(() => {});
   refreshConnections().catch(() => {});
-  refreshGlobe().catch(() => {});
+  refreshTopology().catch(() => {});
 }, 15000);
 
 bootstrap().catch(() => {

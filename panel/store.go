@@ -365,27 +365,30 @@ func (s *store) connections(limit int, protocols, usernames, statuses []string) 
 	return out, rows.Err()
 }
 
-type connStatRow struct {
-	Source string
-	Status string
-	Count  int64
+type connGraphRow struct {
+	Username string
+	Protocol string
+	Status   string
+	Target   string
+	Count    int64
 }
 
-// connectionStats groups recent connections by source address and routing
-// status, so the API can geolocate and aggregate them for the globe.
-func (s *store) connectionStats(since int64) ([]connStatRow, error) {
+// connectionGraph groups recent connections by user, protocol, routing status
+// and target host, so the API can aggregate them into a routing topology.
+func (s *store) connectionGraph(since int64) ([]connGraphRow, error) {
 	rows, err := s.db.Query(
-		`SELECT source, status, COUNT(*) FROM connections WHERE ts >= ? GROUP BY source, status`,
+		`SELECT username, protocol, status, target, COUNT(*) FROM connections WHERE ts >= ?
+		 GROUP BY username, protocol, status, target`,
 		since,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []connStatRow
+	var out []connGraphRow
 	for rows.Next() {
-		var r connStatRow
-		if err := rows.Scan(&r.Source, &r.Status, &r.Count); err != nil {
+		var r connGraphRow
+		if err := rows.Scan(&r.Username, &r.Protocol, &r.Status, &r.Target, &r.Count); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
