@@ -8,7 +8,8 @@ const AUTO_ROTATE = 0.0035;
 const EASE = 0.12;
 const THETA0 = (23.44 * Math.PI) / 180;
 const THETA_MAX = Math.PI / 2 - 0.08;
-const MAX_LABELS = 5;
+const MAX_LABELS = 8;
+const LABEL_GAP = 4;
 
 const COLORS = {
   direct: [0.243, 0.812, 0.608],
@@ -154,7 +155,12 @@ function buildOverlay() {
     el.className = 'globe-label' + (item.server ? ' server' : '');
     el.innerHTML = `<i style="--c:${CSS_COLORS[item.status] || CSS_COLORS.unknown}"></i>${escapeHtml(item.name)}`;
     labelsEl.appendChild(el);
-    labelEls.push({ el, lat: item.lat, lng: item.lng });
+    labelEls.push({ el, lat: item.lat, lng: item.lng, w: 0, h: 0 });
+  }
+  // 一次性测量尺寸并缓存，避免逐帧读取触发 reflow。
+  for (const label of labelEls) {
+    label.w = label.el.offsetWidth;
+    label.h = label.el.offsetHeight;
   }
 
   renderSummary();
@@ -175,10 +181,31 @@ function updateOverlay(p, th) {
   for (const trail of trailPaths) {
     trail.path.setAttribute('d', arcPath(trail.from, trail.to, p, th));
   }
+  // 按优先级（服务器在前、其余按流量降序）贪心放置，重叠的低优先级标签隐藏。
+  const placed = [];
   for (const label of labelEls) {
     const s = projectLatLng(label.lat, label.lng, p, th);
-    label.el.style.transform = `translate(${(s.x * width).toFixed(1)}px, ${(s.y * width).toFixed(1)}px) translate(-50%, 10px)`;
-    label.el.style.opacity = String(Math.min(1, Math.max(0, s.z / 0.12)));
+    const x = s.x * width;
+    const y = s.y * width;
+    label.el.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, 10px)`;
+
+    let visible = s.z > 0;
+    if (visible) {
+      const rect = {
+        l: x - label.w / 2 - LABEL_GAP,
+        t: y + 10 - LABEL_GAP,
+        r: x + label.w / 2 + LABEL_GAP,
+        b: y + 10 + label.h + LABEL_GAP,
+      };
+      for (const q of placed) {
+        if (rect.l < q.r && rect.r > q.l && rect.t < q.b && rect.b > q.t) {
+          visible = false;
+          break;
+        }
+      }
+      if (visible) placed.push(rect);
+    }
+    label.el.style.opacity = visible ? String(Math.min(1, Math.max(0, s.z / 0.12))) : '0';
   }
 }
 
