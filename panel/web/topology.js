@@ -35,12 +35,14 @@
 
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  let data = { nodes: [], links: [], totals: {} };
+  let data = { nodes: [], links: [], totals: {}, user_paths: {} };
   let structureKey = '';
   let nodeEls = new Map();
   let edgeEls = new Map();
+  let edgeList = [];
   let nodeCenter = new Map();
   let adjacency = new Map();
+  let userPaths = {};
   let hovered = null;
 
   function layerOf(kind) {
@@ -111,6 +113,7 @@
     svg.textContent = '';
     nodeEls = new Map();
     edgeEls = new Map();
+    edgeList = [];
     adjacency = new Map();
   }
 
@@ -153,7 +156,7 @@
       el.appendChild(label);
       el.appendChild(count);
 
-      el.addEventListener('mouseenter', () => highlight(n.id));
+      el.addEventListener('mouseenter', () => highlight(n.id, n.kind === 'user'));
       el.addEventListener('mouseleave', clearHighlight);
       nodesEl.appendChild(el);
       nodeEls.set(n.id, el);
@@ -166,10 +169,14 @@
       data.links.slice().sort((a, b) => b.count - a.count)
         .slice(0, MAX_ANIMATED_EDGES).map(keyOf)
     );
-    for (const l of data.links) {
+    for (let i = 0; i < data.links.length; i++) {
+      const l = data.links[i];
       const s = nodeCenter.get(l.source);
       const t = nodeCenter.get(l.target);
-      if (!s || !t) continue;
+      if (!s || !t) {
+        edgeList[i] = null;
+        continue;
+      }
       const sx = s.x + NODE_W / 2;
       const tx = t.x - NODE_W / 2;
       const mx = (sx + tx) / 2;
@@ -208,6 +215,7 @@
       }
       svg.appendChild(g);
       edgeEls.set(keyOf(l), { g, track });
+      edgeList[i] = { g, track };
     }
   }
 
@@ -225,16 +233,33 @@
     }
   }
 
-  function highlight(id) {
+  function highlight(id, isUser) {
     if (hovered === id) return;
     hovered = id;
-    const nbrs = adjacency.get(id) || new Set();
-    for (const [nid, el] of nodeEls) {
-      el.classList.toggle('dim', nid !== id && !nbrs.has(nid));
+    const activeNodes = new Set([id]);
+    const activeEdges = new Set();
+    const path = isUser ? userPaths[id] : null;
+    if (path && path.length) {
+      for (const li of path) {
+        activeEdges.add(li);
+        const l = data.links[li];
+        if (l) {
+          activeNodes.add(l.source);
+          activeNodes.add(l.target);
+        }
+      }
+    } else {
+      const nbrs = adjacency.get(id) || new Set();
+      for (const nb of nbrs) activeNodes.add(nb);
+      for (let i = 0; i < data.links.length; i++) {
+        const l = data.links[i];
+        if (l.source === id || l.target === id) activeEdges.add(i);
+      }
     }
-    for (const [key, e] of edgeEls) {
-      const parts = key.split('\u0000');
-      e.g.classList.toggle('dim', parts[0] !== id && parts[1] !== id);
+    for (const [nid, el] of nodeEls) el.classList.toggle('dim', !activeNodes.has(nid));
+    for (let i = 0; i < edgeList.length; i++) {
+      const e = edgeList[i];
+      if (e) e.g.classList.toggle('dim', !activeEdges.has(i));
     }
   }
 
@@ -253,6 +278,7 @@
   function render() {
     const nodes = data.nodes || [];
     const links = data.links || [];
+    userPaths = data.user_paths || {};
     if (!nodes.length) {
       clearStage();
       structureKey = '';
@@ -279,7 +305,7 @@
 
   window.PanelTopology = {
     update(next) {
-      data = next || { nodes: [], links: [], totals: {} };
+      data = next || { nodes: [], links: [], totals: {}, user_paths: {} };
       render();
     },
   };

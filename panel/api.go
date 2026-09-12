@@ -171,7 +171,7 @@ func (a *api) topology(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	nodes, links, totals := buildTopology(rows)
+	nodes, links, totals, userPaths := buildTopology(rows)
 	if nodes == nil {
 		nodes = []topoNode{}
 	}
@@ -181,10 +181,14 @@ func (a *api) topology(w http.ResponseWriter, r *http.Request) {
 	if totals == nil {
 		totals = map[string]int64{}
 	}
+	if userPaths == nil {
+		userPaths = map[string][]int{}
+	}
 	writeJSON(w, map[string]any{
 		"nodes":        nodes,
 		"links":        links,
 		"totals":       totals,
+		"user_paths":   userPaths,
 		"window_hours": hours,
 		"updated_at":   time.Now().Unix(),
 	})
@@ -192,8 +196,10 @@ func (a *api) topology(w http.ResponseWriter, r *http.Request) {
 
 // buildTopology turns grouped connection rows into topology nodes and links.
 // Users and targets beyond the top N are merged into an "其他" node so the
-// flows stay balanced and the graph stays readable.
-func buildTopology(rows []connGraphRow) ([]topoNode, []topoLink, map[string]int64) {
+// flows stay balanced and the graph stays readable. userPaths maps a user node
+// to the link indices of every route that user actually took, so the UI can
+// highlight a user's full path on hover.
+func buildTopology(rows []connGraphRow) ([]topoNode, []topoLink, map[string]int64, map[string][]int) {
 	userTotals := map[string]int64{}
 	targetTotals := map[string]int64{}
 	userProto := map[[2]string]int64{}
@@ -221,7 +227,7 @@ func buildTopology(rows []connGraphRow) ([]topoNode, []topoLink, map[string]int6
 		total += r.Count
 	}
 	if total == 0 {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 
 	keepUsers := topKeys(userTotals, topoTopN)
@@ -318,7 +324,49 @@ func buildTopology(rows []connGraphRow) ([]topoNode, []topoLink, map[string]int6
 		}
 		return links[i].Status < links[j].Status
 	})
-	return nodes, links, statusTotal
+
+	// Map every (source,target) pair to its link index, then walk the original
+	// tuples to record which links belong to each user's path.
+	linkIndex := make(map[[2]string]int, len(links))
+	for i, l := range links {
+		linkIndex[[2]string{l.Source, l.Target}] = i
+	}
+	pathSets := map[string]map[int]bool{}
+	for _, r := range rows {
+		user := r.Username
+		if user == "" {
+			user = "未知用户"
+		}
+		status := r.Status
+		if status == "" {
+			status = "unknown"
+		}
+		uk := userKey(user)
+		pk := "proto:" + r.Protocol
+		outk := "out:" + status
+		tk := targetKey(normalizeTarget(r.Target))
+		set := pathSets[uk]
+		if set == nil {
+			set = map[int]bool{}
+			pathSets[uk] = set
+		}
+		for _, key := range [][2]string{{uk, pk}, {pk, "srv"}, {"srv", outk}, {outk, tk}} {
+			if i, ok := linkIndex[key]; ok {
+				set[i] = true
+			}
+		}
+	}
+	userPaths := make(map[string][]int, len(pathSets))
+	for uk, set := range pathSets {
+		idxs := make([]int, 0, len(set))
+		for i := range set {
+			idxs = append(idxs, i)
+		}
+		sort.Ints(idxs)
+		userPaths[uk] = idxs
+	}
+
+	return nodes, links, statusTotal, userPaths
 }
 
 // topoLayer maps a node kind to its column: user=0, protocol=1, server=2,

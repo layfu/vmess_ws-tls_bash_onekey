@@ -270,7 +270,7 @@ func TestBuildTopology(t *testing.T) {
 		{Username: "bob", Protocol: "anytls", Status: "blocked", Target: "ads.com:443", Count: 3},
 		{Username: "", Protocol: "anytls", Status: "", Target: "example.com:443", Count: 1},
 	}
-	nodes, links, totals := buildTopology(rows)
+	nodes, links, totals, userPaths := buildTopology(rows)
 
 	if totals["direct"] != 5 || totals["warp"] != 2 || totals["blocked"] != 3 || totals["unknown"] != 1 {
 		t.Errorf("totals = %+v", totals)
@@ -305,6 +305,35 @@ func TestBuildTopology(t *testing.T) {
 	if linkByKey["srv->out:direct"] != 5 || linkByKey["out:warp->target:video.com"] != 2 {
 		t.Errorf("links = %+v", links)
 	}
+
+	// alice's full path must cover both of her routes (direct and warp).
+	alice := map[string]bool{}
+	for _, i := range userPaths["user:alice"] {
+		if i < 0 || i >= len(links) {
+			t.Fatalf("alice path index out of range: %d", i)
+		}
+		alice[links[i].Source+"->"+links[i].Target] = true
+	}
+	for _, want := range []string{
+		"user:alice->proto:vmess",
+		"proto:vmess->srv",
+		"srv->out:direct",
+		"srv->out:warp",
+		"out:direct->target:example.com",
+		"out:warp->target:video.com",
+	} {
+		if !alice[want] {
+			t.Errorf("alice path missing %q; got %+v", want, alice)
+		}
+	}
+	// bob never used direct/example.com, so those must not be in his path.
+	bob := map[string]bool{}
+	for _, i := range userPaths["user:bob"] {
+		bob[links[i].Source+"->"+links[i].Target] = true
+	}
+	if bob["srv->out:direct"] || bob["out:direct->target:example.com"] {
+		t.Errorf("bob path unexpectedly includes direct route: %+v", bob)
+	}
 }
 
 func TestBuildTopologyOtherBuckets(t *testing.T) {
@@ -318,7 +347,7 @@ func TestBuildTopologyOtherBuckets(t *testing.T) {
 			Count:    int64(100 - i),
 		})
 	}
-	nodes, links, _ := buildTopology(rows)
+	nodes, links, _, userPaths := buildTopology(rows)
 	byID := map[string]topoNode{}
 	for _, n := range nodes {
 		byID[n.ID] = n
@@ -350,6 +379,10 @@ func TestBuildTopologyOtherBuckets(t *testing.T) {
 	}
 	if !hasOtherUserLink || !hasOtherTargetLink {
 		t.Errorf("other buckets missing links: %+v", links)
+	}
+	// the merged user must still have a full path
+	if len(userPaths["user:__other__"]) == 0 {
+		t.Errorf("other user has no path")
 	}
 }
 
