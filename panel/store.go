@@ -365,6 +365,34 @@ func (s *store) connections(limit int, protocols, usernames, statuses []string) 
 	return out, rows.Err()
 }
 
+type connStatRow struct {
+	Source string
+	Status string
+	Count  int64
+}
+
+// connectionStats groups recent connections by source address and routing
+// status, so the API can geolocate and aggregate them for the globe.
+func (s *store) connectionStats(since int64) ([]connStatRow, error) {
+	rows, err := s.db.Query(
+		`SELECT source, status, COUNT(*) FROM connections WHERE ts >= ? GROUP BY source, status`,
+		since,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []connStatRow
+	for rows.Next() {
+		var r connStatRow
+		if err := rows.Scan(&r.Source, &r.Status, &r.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 func (s *store) prune(maxAge time.Duration, maxRows int) {
 	if maxAge > 0 {
 		cutoff := time.Now().Add(-maxAge).Unix()

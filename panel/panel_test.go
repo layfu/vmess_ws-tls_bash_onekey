@@ -233,6 +233,35 @@ func TestMonthlyTotals(t *testing.T) {
 	}
 }
 
+func TestConnectionStats(t *testing.T) {
+	st, err := openStore(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	now := time.Now()
+	_ = st.addConnection("vmess", "a", "1.1.1.1:1", "x:443", "direct", now)
+	_ = st.addConnection("vmess", "b", "1.1.1.1:2", "y:443", "warp", now)
+	_ = st.addConnection("vmess", "c", "1.1.1.1:1", "z:443", "direct", now)
+	_ = st.addConnection("vmess", "d", "2.2.2.2:1", "old:443", "direct", now.Add(-48*time.Hour))
+
+	rows, err := st.connectionStats(now.Add(-time.Hour).Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]int64{}
+	for _, r := range rows {
+		counts[r.Source+"|"+r.Status] = r.Count
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 grouped rows, got %d: %+v", len(rows), rows)
+	}
+	if counts["1.1.1.1:1|direct"] != 2 || counts["1.1.1.1:2|warp"] != 1 {
+		t.Errorf("counts = %+v", counts)
+	}
+}
+
 func TestHourlyRange(t *testing.T) {
 	st, err := openStore(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {

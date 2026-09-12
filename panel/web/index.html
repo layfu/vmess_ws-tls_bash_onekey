@@ -87,6 +87,23 @@
     </div>
   </section>
 
+  <section class="card globe-card">
+    <h2>实时路由 <span class="hint">近 24 小时客户端来源与线路走向</span></h2>
+    <div class="globe-stage" id="globe-stage">
+      <canvas id="globe-canvas" class="globe-canvas" role="img" aria-label="客户端到服务器的路由地球"></canvas>
+      <svg class="globe-trails" id="globe-trails" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"></svg>
+      <div class="globe-labels" id="globe-labels" aria-hidden="true"></div>
+      <div class="globe-legend" aria-hidden="true">
+        <span class="globe-legend-item"><i style="--c:var(--up)"></i>直连</span>
+        <span class="globe-legend-item"><i style="--c:var(--warn)"></i>WARP</span>
+        <span class="globe-legend-item"><i style="--c:var(--danger)"></i>封禁</span>
+        <span class="globe-legend-item"><i style="--c:var(--accent)"></i>服务器</span>
+      </div>
+      <div class="globe-empty" id="globe-empty" hidden>暂无连接数据</div>
+    </div>
+    <div class="sr-only" id="globe-summary"></div>
+  </section>
+
   <section class="card">
     <h2>流量趋势</h2>
     <div class="filters">
@@ -232,5 +249,6 @@
 
 <footer><span id="footer-note">数据每 15 秒自动刷新</span> · 面板仅监听本机，经 Nginx 反代访问</footer>
 <script src="app.js"></script>
+<script type="module" src="globe.js"></script>
 </body>
 </html>

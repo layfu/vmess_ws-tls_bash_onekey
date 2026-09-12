@@ -64,6 +64,8 @@ func main() {
 	}()
 
 	a := &api{store: st, cfg: cfg, onlineWin: int64(cfg.OnlineWindowSec), geo: newGeoLookup(cfg.GeoDB)}
+	a.server = newServerLocator(cfg, a.geo)
+	go a.server.run(ctx)
 
 	auth, err := newAuthenticator(cfg)
 	if err != nil {
@@ -77,6 +79,7 @@ func main() {
 	mux.HandleFunc("/api/overview", a.overview)
 	mux.HandleFunc("/api/traffic", a.traffic)
 	mux.HandleFunc("/api/connections", a.connections)
+	mux.HandleFunc("/api/routes", a.routes)
 	mux.HandleFunc("/api/history", a.history)
 	mux.HandleFunc("/api/configs", a.configs)
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, _ *http.Request) {

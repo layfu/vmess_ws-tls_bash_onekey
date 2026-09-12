@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -13,6 +14,7 @@ type api struct {
 	cfg       *Config
 	onlineWin int64
 	geo       *geoLookup
+	server    *serverLocator
 }
 
 type userInfo struct {
@@ -138,6 +140,97 @@ func (a *api) connections(w http.ResponseWriter, r *http.Request) {
 		out = append(out, ci)
 	}
 	writeJSON(w, map[string]any{"connections": out})
+}
+
+type routeNode struct {
+	Lat    float64          `json:"lat"`
+	Lng    float64          `json:"lng"`
+	Region string           `json:"region"`
+	Count  int64            `json:"count"`
+	Status map[string]int64 `json:"status"`
+}
+
+// routes aggregates recent connections into coarse client locations for the
+// globe: one node per region with per-status counts, plus the server hub.
+func (a *api) routes(w http.ResponseWriter, r *http.Request) {
+	hours, _ := strconv.Atoi(r.URL.Query().Get("hours"))
+	if hours <= 0 || hours > 24*7 {
+		hours = 24
+	}
+	since := time.Now().Add(-time.Duration(hours) * time.Hour).Unix()
+	rows, err := a.store.connectionStats(since)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	type agg struct {
+		region   string
+		lat, lng float64
+		count    int64
+		status   map[string]int64
+	}
+	type point struct {
+		region   string
+		lat, lng float64
+		ok       bool
+	}
+	cache := map[string]point{}
+	byKey := map[string]*agg{}
+	for _, row := range rows {
+		if a.geo == nil {
+			continue
+		}
+		p, seen := cache[row.Source]
+		if !seen {
+			region, lat, lng, ok := a.geo.lookupPoint(row.Source)
+			p = point{region: region, lat: lat, lng: lng, ok: ok}
+			cache[row.Source] = p
+		}
+		if !p.ok {
+			continue
+		}
+		key := fmt.Sprintf("%.3f,%.3f", p.lat, p.lng)
+		n := byKey[key]
+		if n == nil {
+			n = &agg{region: p.region, lat: p.lat, lng: p.lng, status: map[string]int64{}}
+			byKey[key] = n
+		}
+		n.count += row.Count
+		status := row.Status
+		if status == "" {
+			status = "unknown"
+		}
+		n.status[status] += row.Count
+	}
+
+	nodes := make([]routeNode, 0, len(byKey))
+	for _, n := range byKey {
+		nodes = append(nodes, routeNode{
+			Lat:    n.lat,
+			Lng:    n.lng,
+			Region: n.region,
+			Count:  n.count,
+			Status: n.status,
+		})
+	}
+	sort.Slice(nodes, func(i, j int) bool {
+		if nodes[i].Count != nodes[j].Count {
+			return nodes[i].Count > nodes[j].Count
+		}
+		return nodes[i].Region < nodes[j].Region
+	})
+	const maxNodes = 24
+	if len(nodes) > maxNodes {
+		nodes = nodes[:maxNodes]
+	}
+
+	writeJSON(w, map[string]any{
+		"server":       a.server.get(),
+		"nodes":        nodes,
+		"window_hours": hours,
+		"updated_at":   time.Now().Unix(),
+	})
 }
 
 type historyUser struct {

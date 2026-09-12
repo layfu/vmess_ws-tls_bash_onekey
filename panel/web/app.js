@@ -386,6 +386,16 @@ function updateConnMore(count) {
   btn.style.display = (connLimit < CONN_MAX && count >= connLimit) ? '' : 'none';
 }
 
+async function refreshGlobe() {
+  if (!window.PanelGlobe) return;
+  const data = await fetchJSON('api/routes?hours=24');
+  window.PanelGlobe.update(data);
+}
+
+window.addEventListener('panel-globe-ready', () => {
+  refreshGlobe().catch(() => {});
+});
+
 function histRange() {
   const mode = document.getElementById('hist-range').value;
   const now = Math.floor(Date.now() / 1000);
@@ -1200,6 +1210,7 @@ function applyUrlState() {
 
   refreshOverview().catch(() => {});
   refreshConnections().catch(() => {});
+  refreshGlobe().catch(() => {});
   refreshChart().catch(() => {});
   refreshHistory().catch(() => {});
   if (page === 'configs') ensureConfigs().catch(() => {});
@@ -1327,6 +1338,7 @@ setInterval(() => {
   if (shouldSkipAutoRefresh()) return;
   refreshOverview().catch(() => {});
   refreshConnections().catch(() => {});
+  refreshGlobe().catch(() => {});
 }, 15000);
 
 bootstrap().catch(() => {

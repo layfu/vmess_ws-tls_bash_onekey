@@ -24,6 +24,9 @@ type Config struct {
 	OnlineWindowSec   int            `json:"online_window_sec"`
 	RetentionDays     int            `json:"retention_days"`
 	GeoDB             string         `json:"geo_db"`
+	ServerLat         float64        `json:"server_lat"`
+	ServerLng         float64        `json:"server_lng"`
+	ServerName        string         `json:"server_name"`
 	AuthFile          string         `json:"auth_file"`
 	SessionSecretFile string         `json:"session_secret_file"`
 	SessionTTLSec     int            `json:"session_ttl_sec"`
