@@ -11,7 +11,9 @@
   const NODE_H = 38;
   const NODE_PITCH = 46;
   const LAYERS = 5;
-  const MAX_ANIMATED_EDGES = 30;
+  const MAX_ANIMATED_EDGES = 20;
+  const PARTICLE_COUNT = 3;
+  const FLOW_DURATION = 3;
 
   const STATUS_COLORS = {
     direct: 'rgb(62, 207, 155)',
@@ -44,6 +46,17 @@
   let adjacency = new Map();
   let userPaths = {};
   let hovered = null;
+  let hiddenByTab = document.hidden;
+  let offscreen = false;
+  let animationsPaused = false;
+
+  // 页面不可见或卡片滚出视口时暂停 SMIL 粒子，省 CPU。
+  function applyPause() {
+    animationsPaused = hiddenByTab || offscreen;
+    if (typeof svg.pauseAnimations !== 'function') return;
+    if (animationsPaused) svg.pauseAnimations();
+    else svg.unpauseAnimations();
+  }
 
   function layerOf(kind) {
     if (kind === 'user') return 0;
@@ -166,7 +179,7 @@
   function buildEdges() {
     const maxCount = data.links.reduce((m, l) => Math.max(m, l.count), 1);
     const animated = new Set(
-      data.links.slice().sort((a, b) => b.count - a.count)
+      data.links.filter((l) => l.count >= 2).sort((a, b) => b.count - a.count)
         .slice(0, MAX_ANIMATED_EDGES).map(keyOf)
     );
     for (let i = 0; i < data.links.length; i++) {
@@ -199,17 +212,27 @@
       g.appendChild(line);
 
       if (!reducedMotion && animated.has(keyOf(l))) {
-        for (let i = 0; i < 2; i++) {
+        for (let p = 0; p < PARTICLE_COUNT; p++) {
+          // 负 begin 让粒子错峰，opacity 淡入淡出遮住循环回到起点的跳变。
+          const begin = (-p * FLOW_DURATION / PARTICLE_COUNT) + 's';
           const dot = document.createElementNS(SVG_NS, 'circle');
           dot.setAttribute('class', 'topo-edge-dot');
-          dot.setAttribute('r', String(2.4 - i * 0.7));
+          dot.setAttribute('r', '2.1');
           dot.setAttribute('fill', color);
-          const anim = document.createElementNS(SVG_NS, 'animateMotion');
-          anim.setAttribute('dur', '2.4s');
-          anim.setAttribute('repeatCount', 'indefinite');
-          anim.setAttribute('begin', (i * 1.2) + 's');
-          anim.setAttribute('path', d);
-          dot.appendChild(anim);
+          const motion = document.createElementNS(SVG_NS, 'animateMotion');
+          motion.setAttribute('dur', FLOW_DURATION + 's');
+          motion.setAttribute('repeatCount', 'indefinite');
+          motion.setAttribute('begin', begin);
+          motion.setAttribute('path', d);
+          const fade = document.createElementNS(SVG_NS, 'animate');
+          fade.setAttribute('attributeName', 'opacity');
+          fade.setAttribute('values', '0;1;1;0');
+          fade.setAttribute('keyTimes', '0;0.12;0.88;1');
+          fade.setAttribute('dur', FLOW_DURATION + 's');
+          fade.setAttribute('repeatCount', 'indefinite');
+          fade.setAttribute('begin', begin);
+          dot.appendChild(motion);
+          dot.appendChild(fade);
           g.appendChild(dot);
         }
       }
@@ -286,6 +309,7 @@
       stage.style.height = '';
       emptyEl.hidden = false;
       renderSummary();
+      applyPause();
       return;
     }
     emptyEl.hidden = true;
@@ -301,6 +325,7 @@
       updateInPlace();
     }
     renderSummary();
+    applyPause();
   }
 
   window.PanelTopology = {
@@ -309,6 +334,18 @@
       render();
     },
   };
+
+  document.addEventListener('visibilitychange', () => {
+    hiddenByTab = document.hidden;
+    applyPause();
+  });
+  if ('IntersectionObserver' in window) {
+    const io = new IntersectionObserver((entries) => {
+      for (const entry of entries) offscreen = !entry.isIntersecting;
+      applyPause();
+    }, { threshold: 0 });
+    io.observe(stage.closest('.topo-card') || stage);
+  }
 
   window.dispatchEvent(new CustomEvent('panel-topology-ready'));
 })();
