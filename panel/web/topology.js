@@ -11,9 +11,10 @@
   const NODE_H = 38;
   const NODE_PITCH = 46;
   const LAYERS = 5;
-  const MAX_ANIMATED_EDGES = 20;
-  const PARTICLE_COUNT = 3;
+  const PARTICLE_COUNT = 2;
   const FLOW_DURATION = 3;
+  const ANIM_MIN_COUNT = 2;
+  const ANIM_RATIO = 0.05;
 
   const STATUS_COLORS = {
     direct: 'rgb(62, 207, 155)',
@@ -52,9 +53,11 @@
 
   // 页面不可见或卡片滚出视口时暂停 SMIL 粒子，省 CPU。
   function applyPause() {
-    animationsPaused = hiddenByTab || offscreen;
+    const paused = hiddenByTab || offscreen;
+    if (paused === animationsPaused) return;
+    animationsPaused = paused;
     if (typeof svg.pauseAnimations !== 'function') return;
-    if (animationsPaused) svg.pauseAnimations();
+    if (paused) svg.pauseAnimations();
     else svg.unpauseAnimations();
   }
 
@@ -93,6 +96,11 @@
 
   function edgeWidth(count, maxCount) {
     return 1 + Math.min(1, count / Math.max(maxCount, 1)) * 5;
+  }
+
+  // 相对门槛：只看这条边占最大边流量的比例，突出主干线路。
+  function shouldAnimate(count, maxCount) {
+    return count >= Math.max(ANIM_MIN_COUNT, maxCount * ANIM_RATIO);
   }
 
   function layout() {
@@ -176,12 +184,43 @@
     }
   }
 
+  // 沿边添加流动粒子：负 begin 错峰，opacity 淡入淡出遮住循环回到起点的跳变。
+  function addParticles(g, d, color) {
+    const dots = [];
+    for (let p = 0; p < PARTICLE_COUNT; p++) {
+      const begin = (-p * FLOW_DURATION / PARTICLE_COUNT) + 's';
+      const dot = document.createElementNS(SVG_NS, 'circle');
+      dot.setAttribute('class', 'topo-edge-dot');
+      dot.setAttribute('r', '2.1');
+      dot.setAttribute('fill', color);
+      const motion = document.createElementNS(SVG_NS, 'animateMotion');
+      motion.setAttribute('dur', FLOW_DURATION + 's');
+      motion.setAttribute('repeatCount', 'indefinite');
+      motion.setAttribute('begin', begin);
+      motion.setAttribute('path', d);
+      const fade = document.createElementNS(SVG_NS, 'animate');
+      fade.setAttribute('attributeName', 'opacity');
+      fade.setAttribute('values', '0;1;1;0');
+      fade.setAttribute('keyTimes', '0;0.12;0.88;1');
+      fade.setAttribute('dur', FLOW_DURATION + 's');
+      fade.setAttribute('repeatCount', 'indefinite');
+      fade.setAttribute('begin', begin);
+      dot.appendChild(motion);
+      dot.appendChild(fade);
+      g.appendChild(dot);
+      dots.push(dot);
+    }
+    return dots;
+  }
+
+  function removeParticles(entry) {
+    if (!entry.dots) return;
+    for (const dot of entry.dots) dot.remove();
+    entry.dots = null;
+  }
+
   function buildEdges() {
     const maxCount = data.links.reduce((m, l) => Math.max(m, l.count), 1);
-    const animated = new Set(
-      data.links.filter((l) => l.count >= 2).sort((a, b) => b.count - a.count)
-        .slice(0, MAX_ANIMATED_EDGES).map(keyOf)
-    );
     for (let i = 0; i < data.links.length; i++) {
       const l = data.links[i];
       const s = nodeCenter.get(l.source);
@@ -211,34 +250,13 @@
       g.appendChild(track);
       g.appendChild(line);
 
-      if (!reducedMotion && animated.has(keyOf(l))) {
-        for (let p = 0; p < PARTICLE_COUNT; p++) {
-          // 负 begin 让粒子错峰，opacity 淡入淡出遮住循环回到起点的跳变。
-          const begin = (-p * FLOW_DURATION / PARTICLE_COUNT) + 's';
-          const dot = document.createElementNS(SVG_NS, 'circle');
-          dot.setAttribute('class', 'topo-edge-dot');
-          dot.setAttribute('r', '2.1');
-          dot.setAttribute('fill', color);
-          const motion = document.createElementNS(SVG_NS, 'animateMotion');
-          motion.setAttribute('dur', FLOW_DURATION + 's');
-          motion.setAttribute('repeatCount', 'indefinite');
-          motion.setAttribute('begin', begin);
-          motion.setAttribute('path', d);
-          const fade = document.createElementNS(SVG_NS, 'animate');
-          fade.setAttribute('attributeName', 'opacity');
-          fade.setAttribute('values', '0;1;1;0');
-          fade.setAttribute('keyTimes', '0;0.12;0.88;1');
-          fade.setAttribute('dur', FLOW_DURATION + 's');
-          fade.setAttribute('repeatCount', 'indefinite');
-          fade.setAttribute('begin', begin);
-          dot.appendChild(motion);
-          dot.appendChild(fade);
-          g.appendChild(dot);
-        }
+      const entry = { g, track, d, color, dots: null };
+      if (!reducedMotion && shouldAnimate(l.count, maxCount)) {
+        entry.dots = addParticles(g, d, color);
       }
       svg.appendChild(g);
-      edgeEls.set(keyOf(l), { g, track });
-      edgeList[i] = { g, track };
+      edgeEls.set(keyOf(l), entry);
+      edgeList[i] = entry;
     }
   }
 
@@ -250,9 +268,20 @@
       if (c) c.textContent = fmtCount(n.count);
     }
     const maxCount = data.links.reduce((m, l) => Math.max(m, l.count), 1);
-    for (const l of data.links) {
-      const e = edgeEls.get(keyOf(l));
-      if (e) e.track.setAttribute('stroke-width', String(edgeWidth(l.count, maxCount) + 6));
+    for (let i = 0; i < data.links.length; i++) {
+      const l = data.links[i];
+      const entry = edgeList[i];
+      if (!entry) continue;
+      entry.track.setAttribute('stroke-width', String(edgeWidth(l.count, maxCount) + 6));
+      // 数据刷新时同步粒子的增删，保证动画状态与当前 count/门槛一致。
+      if (!reducedMotion) {
+        const want = shouldAnimate(l.count, maxCount);
+        if (want && !entry.dots) {
+          entry.dots = addParticles(entry.g, entry.d, entry.color);
+        } else if (!want && entry.dots) {
+          removeParticles(entry);
+        }
+      }
     }
   }
 
