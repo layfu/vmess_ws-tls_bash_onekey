@@ -141,6 +141,14 @@ func migrate(db *sql.DB) error {
 		SELECT '', protocol, host, status, hour, uplink, downlink FROM target_traffic`); err != nil {
 		return err
 	}
+	// sing-box user names are namespaced in the config ("v:"/"a:"). Older
+	// connection rows stored the raw name; strip it so they match the per-user
+	// stats (usernames cannot contain ":").
+	for _, prefix := range []string{"v:", "a:"} {
+		if _, err := db.Exec(`UPDATE connections SET username = substr(username, 3) WHERE username LIKE ?`, prefix+"%"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

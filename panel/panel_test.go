@@ -419,6 +419,69 @@ func TestBuildTopologyScalesTargetsToOutbound(t *testing.T) {
 	}
 }
 
+func TestBuildTopologyPerUserScaled(t *testing.T) {
+	// Clash sampled 100 bytes total on warp (60 from alice's host, 40 from
+	// bob's), but the accurate outbound total is 200 -> 2x. Per-user values must
+	// use the same factor so they stay consistent with the aggregate and never
+	// exceed it.
+	userRows := []userTrafficRow{
+		{Protocol: "vmess", Username: "alice", Uplink: 100},
+		{Protocol: "vmess", Username: "bob", Uplink: 100},
+	}
+	targetRows := []targetTrafficRow{
+		{Protocol: "vmess", Host: "a.com", Status: "warp", Uplink: 60},
+		{Protocol: "vmess", Host: "b.com", Status: "warp", Uplink: 40},
+	}
+	outboundBytes := map[string]int64{"warp": 200}
+	userTargetRows := []userTargetTrafficRow{
+		{Username: "alice", Protocol: "vmess", Host: "a.com", Status: "warp", Uplink: 60},
+		{Username: "bob", Protocol: "vmess", Host: "b.com", Status: "warp", Uplink: 40},
+	}
+	nodes, _, _, userPaths := buildTopology(userRows, targetRows, outboundBytes, nil, userTargetRows, nil)
+	byID := map[string]topoNode{}
+	for _, n := range nodes {
+		byID[n.ID] = n
+	}
+	if n := byID["target:a.com"]; n.Value != 120 {
+		t.Errorf("target a.com = %+v (want 120)", n)
+	}
+	alice := userPaths["user:alice"]
+	if alice == nil {
+		t.Fatalf("alice path missing")
+	}
+	if v := alice.Nodes["target:a.com"]; v != 120 {
+		t.Errorf("alice a.com = %d (want 120, scaled)", v)
+	}
+	if v := alice.Nodes["out:warp"]; v != 120 {
+		t.Errorf("alice warp = %d (want 120)", v)
+	}
+	if v := alice.Nodes["target:a.com"]; v > byID["target:a.com"].Value {
+		t.Errorf("per-user value %d exceeds aggregate %d", v, byID["target:a.com"].Value)
+	}
+}
+
+func TestBuildTopologyStripsUserNamespace(t *testing.T) {
+	// Connection-log rows written before the namespace fix still carry the
+	// "a:"/"v:" prefix; they must still be attributed to the base user.
+	userRows := []userTrafficRow{
+		{Protocol: "anytls", Username: "admin", Uplink: 10},
+	}
+	connRows := []connGraphRow{
+		{Username: "a:admin", Protocol: "anytls", Status: "blocked", Target: "ads.com:443", Count: 4},
+	}
+	_, _, _, userPaths := buildTopology(userRows, nil, nil, nil, nil, connRows)
+	admin := userPaths["user:admin"]
+	if admin == nil {
+		t.Fatalf("admin path missing")
+	}
+	if v := admin.Nodes["btarget:ads.com"]; v != 4 {
+		t.Errorf("admin blocked target = %d (want 4)", v)
+	}
+	if v := admin.Nodes["out:blocked"]; v != 4 {
+		t.Errorf("admin out:blocked = %d (want 4)", v)
+	}
+}
+
 func TestBuildTopologyProtocolUsesInbound(t *testing.T) {
 	// Same username on both protocols: the user node is the combined per-user
 	// total, while each protocol node comes from the accurate inbound stats.

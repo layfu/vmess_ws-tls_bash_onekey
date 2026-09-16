@@ -498,6 +498,11 @@ func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, out
 	// traffic on every segment. user/protocol come from the namespaced per-user
 	// stats; outbound/target come from the Clash API, which the build patches to
 	// expose the authenticated user on each connection.
+	//
+	// The Clash sample undercounts (short connections are missed), so the target
+	// layer is scaled up to the accurate outbound total. Apply the same
+	// per-status factor here, otherwise a user's value could exceed the aggregate
+	// it is part of.
 	userOut := map[[2]string]int64{}    // (userKey, status) -> bytes
 	userTarget := map[[3]string]int64{} // (userKey, status, host) -> bytes
 	for _, r := range userTargetRows {
@@ -515,9 +520,17 @@ func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, out
 		if status == "blocked" {
 			continue
 		}
+		denom := clashStatus[status]
+		if denom <= 0 || outBytes[status] <= 0 {
+			continue
+		}
+		scaled := b * outBytes[status] / denom
+		if scaled <= 0 {
+			continue
+		}
 		uk := userKey(r.Username)
-		userOut[[2]string{uk, status}] += b
-		userTarget[[3]string{uk, status, r.Host}] += b
+		userOut[[2]string{uk, status}] += scaled
+		userTarget[[3]string{uk, status, r.Host}] += scaled
 	}
 	userBlocked := map[[2]string]int64{} // (userKey, host) -> attempts
 	for _, r := range connRows {
@@ -528,7 +541,7 @@ func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, out
 		if host == "" {
 			continue
 		}
-		userBlocked[[2]string{userKey(r.Username), host}] += r.Count
+		userBlocked[[2]string{userKey(baseUserName(r.Username)), host}] += r.Count
 	}
 
 	userPaths := map[string]*topoPath{}
