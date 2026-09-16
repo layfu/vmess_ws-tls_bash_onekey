@@ -22,7 +22,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.9.34"
+shell_version="1.6.9.35"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -662,6 +662,27 @@ singbox_v2rayapi_download() {
     return 0
 }
 
+# 发布产物里 sing-box 的 sha256（来自仓库最新 Release），用于判断本地二进制是否需要更新。
+singbox_v2rayapi_remote_sha() {
+    local arch
+    arch="$(singbox_arch)"
+    curl -L -q --retry 3 --retry-delay 5 --retry-max-time 30 \
+        "https://github.com/${panel_repo}/releases/latest/download/sing-box-v2rayapi-linux-${arch}.sha256" 2>/dev/null |
+        awk '{print $1}'
+}
+
+# 仓库最新 Release 备注里的 sing-box 上游版本号（仅用于显示）。
+singbox_v2rayapi_release_version() {
+    local tmp_file
+    tmp_file="$(mktemp)"
+    if ! curl -sS -H "Accept: application/vnd.github.v3+json" -o "$tmp_file" "https://api.github.com/repos/${panel_repo}/releases/latest"; then
+        rm -f "$tmp_file"
+        return 0
+    fi
+    sed 'y/,/\n/' "$tmp_file" | grep '"body"' | grep -oE 'sing-box: *v[0-9]+\.[0-9]+\.[0-9]+' | head -1 | awk '{print $NF}' | sed 's/^v//'
+    rm -f "$tmp_file"
+}
+
 singbox_v2rayapi_ensure() {
     [[ -f "${singbox_conf}" ]] || return 0
     singbox_has_v2ray_api && return 0
@@ -694,25 +715,22 @@ singbox_v2rayapi_update() {
     current_ver="$(${singbox_bin_dir} version -n 2>/dev/null | head -n 1)"
     echo -e "${OK} ${GreenBG} 当前 sing-box 版本: ${current_ver} ${Font}"
 
-    local tmp_file latest_ver
-    tmp_file="$(mktemp)"
-    if ! curl -sS -H "Accept: application/vnd.github.v3+json" -o "$tmp_file" "https://api.github.com/repos/${panel_repo}/releases/latest"; then
-        rm -f "$tmp_file"
-        echo -e "${Error} ${RedBG} 获取版本信息失败，请检查网络连接 ${Font}"
-        return 1
+    # 上游版本号相同不代表二进制相同：本仓库的定制补丁更新时 sing-box 版本号不变，
+    # 因此用发布产物的 sha256 与本地二进制比对来判断是否需要更新。
+    local local_sha remote_sha
+    local_sha="$(sha256sum "${singbox_bin_dir}" 2>/dev/null | awk '{print $1}')"
+    remote_sha="$(singbox_v2rayapi_remote_sha)"
+    if [[ -n "${remote_sha}" && -n "${local_sha}" && "${local_sha}" == "${remote_sha}" ]]; then
+        echo -e "${OK} ${GreenBG} 当前 sing-box (v2ray_api) 已是最新构建（${current_ver}），无需更新 ${Font}"
+        return 0
     fi
-    latest_ver="$(sed 'y/,/\n/' "$tmp_file" | grep '"body"' | grep -oE 'sing-box: *v[0-9]+\.[0-9]+\.[0-9]+' | head -1 | awk '{print $NF}')"
-    rm -f "$tmp_file"
 
-    if [[ -z "$latest_ver" ]]; then
-        echo -e "${Error} ${RedBG} 无法获取带 v2ray_api 的 sing-box 版本信息，将直接下载 ${Font}"
+    local latest_ver
+    latest_ver="$(singbox_v2rayapi_release_version)"
+    if [[ -n "${latest_ver}" ]]; then
+        echo -e "${OK} ${GreenBG} 发现新的 sing-box (v2ray_api) 构建: ${latest_ver} (当前: ${current_ver}) ${Font}"
     else
-        latest_ver="${latest_ver#v}"
-        if [[ "${current_ver}" == "${latest_ver}" ]]; then
-            echo -e "${OK} ${GreenBG} 当前已是最新版本 ${latest_ver}，无需更新 ${Font}"
-            return 0
-        fi
-        echo -e "${OK} ${GreenBG} 发现新版本: ${latest_ver} (当前: ${current_ver}) ${Font}"
+        echo -e "${OK} ${GreenBG} 发现新的 sing-box (v2ray_api) 构建，将下载替换 ${Font}"
     fi
 
     local confirm=""
