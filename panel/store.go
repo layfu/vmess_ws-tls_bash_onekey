@@ -43,8 +43,18 @@ CREATE TABLE IF NOT EXISTS connections (
   target TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS target_traffic (
+  protocol TEXT NOT NULL,
+  host TEXT NOT NULL,
+  status TEXT NOT NULL,
+  hour INTEGER NOT NULL,
+  uplink INTEGER NOT NULL DEFAULT 0,
+  downlink INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (protocol, host, status, hour)
+);
 CREATE INDEX IF NOT EXISTS idx_connections_ts ON connections(ts);
 CREATE INDEX IF NOT EXISTS idx_hourly_hour ON hourly(hour);
+CREATE INDEX IF NOT EXISTS idx_target_traffic_hour ON target_traffic(hour);
 `
 
 type store struct {
@@ -394,6 +404,84 @@ func (s *store) connectionGraph(since int64) ([]connGraphRow, error) {
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+type targetTrafficRow struct {
+	Protocol string
+	Host     string
+	Status   string
+	Uplink   int64
+	Downlink int64
+}
+
+// addTargetTraffic accumulates per-destination bytes (collected from the
+// sing-box Clash API) into the current hour bucket.
+func (s *store) addTargetTraffic(protocol, host, status string, hour, uplink, downlink int64) error {
+	_, err := s.db.Exec(
+		`INSERT INTO target_traffic (protocol, host, status, hour, uplink, downlink) VALUES (?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(protocol, host, status, hour) DO UPDATE SET
+		   uplink = uplink + excluded.uplink,
+		   downlink = downlink + excluded.downlink`,
+		protocol, host, status, hour, uplink, downlink,
+	)
+	return err
+}
+
+func (s *store) targetTraffic(since int64) ([]targetTrafficRow, error) {
+	rows, err := s.db.Query(
+		`SELECT protocol, host, status, SUM(uplink), SUM(downlink) FROM target_traffic
+		 WHERE hour >= ? GROUP BY protocol, host, status`,
+		since,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []targetTrafficRow
+	for rows.Next() {
+		var r targetTrafficRow
+		if err := rows.Scan(&r.Protocol, &r.Host, &r.Status, &r.Uplink, &r.Downlink); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+type userTrafficRow struct {
+	Protocol string
+	Username string
+	Uplink   int64
+	Downlink int64
+}
+
+// userProtocolTraffic returns per (protocol, user) bytes over the window.
+func (s *store) userProtocolTraffic(since int64) ([]userTrafficRow, error) {
+	rows, err := s.db.Query(
+		`SELECT protocol, username, SUM(uplink), SUM(downlink) FROM hourly
+		 WHERE hour >= ? GROUP BY protocol, username`,
+		since,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []userTrafficRow
+	for rows.Next() {
+		var r userTrafficRow
+		if err := rows.Scan(&r.Protocol, &r.Username, &r.Uplink, &r.Downlink); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *store) pruneTargetTraffic(maxAge time.Duration) {
+	if maxAge > 0 {
+		cutoff := time.Now().Add(-maxAge).Unix()
+		_, _ = s.db.Exec(`DELETE FROM target_traffic WHERE hour < ?`, cutoff)
+	}
 }
 
 func (s *store) prune(maxAge time.Duration, maxRows int) {

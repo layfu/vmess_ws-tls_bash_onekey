@@ -146,32 +146,44 @@ type topoNode struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
 	Kind  string `json:"kind"`
-	Count int64  `json:"count"`
+	Bytes int64  `json:"bytes"`
 }
 
 type topoLink struct {
 	Source string `json:"source"`
 	Target string `json:"target"`
 	Status string `json:"status"`
-	Count  int64  `json:"count"`
+	Bytes  int64  `json:"bytes"`
 }
 
 const topoTopN = 10
 
-// topology aggregates recent connections into a layered routing graph:
-// user -> protocol -> server -> outbound status -> target.
+// topology aggregates recent traffic into a layered routing graph:
+// user -> protocol -> server -> outbound status -> target. User/protocol bytes
+// come from the per-user stats; outbound/target bytes come from the Clash API
+// per-connection stats. User full paths (for hover) come from the connection log.
 func (a *api) topology(w http.ResponseWriter, r *http.Request) {
 	hours, _ := strconv.Atoi(r.URL.Query().Get("hours"))
 	if hours <= 0 || hours > 24*7 {
 		hours = 24
 	}
 	since := time.Now().Add(-time.Duration(hours) * time.Hour).Unix()
-	rows, err := a.store.connectionGraph(since)
+	userRows, err := a.store.userProtocolTraffic(since)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	nodes, links, totals, userPaths := buildTopology(rows)
+	targetRows, err := a.store.targetTraffic(since)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	connRows, err := a.store.connectionGraph(since)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	nodes, links, totals, userPaths := buildTopology(userRows, targetRows, connRows)
 	if nodes == nil {
 		nodes = []topoNode{}
 	}
@@ -194,44 +206,55 @@ func (a *api) topology(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// buildTopology turns grouped connection rows into topology nodes and links.
-// Users and targets beyond the top N are merged into an "其他" node so the
-// flows stay balanced and the graph stays readable. userPaths maps a user node
-// to the link indices of every route that user actually took, so the UI can
-// highlight a user's full path on hover.
-func buildTopology(rows []connGraphRow) ([]topoNode, []topoLink, map[string]int64, map[string][]int) {
-	userTotals := map[string]int64{}
-	targetTotals := map[string]int64{}
+// buildTopology turns per-user and per-target traffic into a layered routing
+// graph. Users and targets beyond the top N are merged into an "其他" node.
+// userPaths maps a user node to the link indices of every route that user took.
+func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, connRows []connGraphRow) ([]topoNode, []topoLink, map[string]int64, map[string][]int) {
+	userBytes := map[string]int64{}
+	protoBytes := map[string]int64{}
 	userProto := map[[2]string]int64{}
-	protoTotal := map[string]int64{}
-	statusTotal := map[string]int64{}
+	targetBytes := map[string]int64{}
+	statusBytes := map[string]int64{}
 	outTarget := map[[2]string]int64{}
-	var total int64
+	var total, statusTotal int64
 
-	for _, r := range rows {
+	for _, r := range userRows {
 		if r.Username == "" {
 			continue
 		}
-		user := r.Username
+		b := r.Uplink + r.Downlink
+		if b == 0 {
+			continue
+		}
+		userBytes[r.Username] += b
+		protoBytes[r.Protocol] += b
+		userProto[[2]string{r.Username, r.Protocol}] += b
+		total += b
+	}
+	for _, r := range targetRows {
+		b := r.Uplink + r.Downlink
+		if b == 0 || r.Host == "" {
+			continue
+		}
 		status := r.Status
 		if status == "" {
 			status = "unknown"
 		}
-		target := normalizeTarget(r.Target)
-		userTotals[user] += r.Count
-		targetTotals[target] += r.Count
-		userProto[[2]string{user, r.Protocol}] += r.Count
-		protoTotal[r.Protocol] += r.Count
-		statusTotal[status] += r.Count
-		outTarget[[2]string{status, target}] += r.Count
-		total += r.Count
+		targetBytes[r.Host] += b
+		statusBytes[status] += b
+		outTarget[[2]string{status, r.Host}] += b
+		statusTotal += b
 	}
-	if total == 0 {
+	if total == 0 && statusTotal == 0 {
 		return nil, nil, nil, nil
 	}
+	serverBytes := total
+	if serverBytes == 0 {
+		serverBytes = statusTotal
+	}
 
-	keepUsers := topKeys(userTotals, topoTopN)
-	keepTargets := topKeys(targetTotals, topoTopN)
+	keepUsers := topKeys(userBytes, topoTopN)
+	keepTargets := topKeys(targetBytes, topoTopN)
 	userKey := func(name string) string {
 		if keepUsers[name] {
 			return "user:" + name
@@ -245,11 +268,11 @@ func buildTopology(rows []connGraphRow) ([]topoNode, []topoLink, map[string]int6
 		return "target:__other__"
 	}
 
-	userCount := map[string]int64{}
+	userNodeBytes := map[string]int64{}
 	userLabel := map[string]string{}
-	for name, c := range userTotals {
+	for name, b := range userBytes {
 		id := userKey(name)
-		userCount[id] += c
+		userNodeBytes[id] += b
 		if _, ok := userLabel[id]; !ok {
 			if id == "user:__other__" {
 				userLabel[id] = "其他"
@@ -258,11 +281,11 @@ func buildTopology(rows []connGraphRow) ([]topoNode, []topoLink, map[string]int6
 			}
 		}
 	}
-	targetCount := map[string]int64{}
+	targetNodeBytes := map[string]int64{}
 	targetLabel := map[string]string{}
-	for name, c := range targetTotals {
+	for name, b := range targetBytes {
 		id := targetKey(name)
-		targetCount[id] += c
+		targetNodeBytes[id] += b
 		if _, ok := targetLabel[id]; !ok {
 			if id == "target:__other__" {
 				targetLabel[id] = "其他"
@@ -272,37 +295,37 @@ func buildTopology(rows []connGraphRow) ([]topoNode, []topoLink, map[string]int6
 		}
 	}
 
-	nodes := make([]topoNode, 0, len(userCount)+len(protoTotal)+1+len(statusTotal)+len(targetCount))
-	for id, c := range userCount {
-		nodes = append(nodes, topoNode{ID: id, Label: userLabel[id], Kind: "user", Count: c})
+	nodes := make([]topoNode, 0, len(userNodeBytes)+len(protoBytes)+1+len(statusBytes)+len(targetNodeBytes))
+	for id, b := range userNodeBytes {
+		nodes = append(nodes, topoNode{ID: id, Label: userLabel[id], Kind: "user", Bytes: b})
 	}
-	for p, c := range protoTotal {
-		nodes = append(nodes, topoNode{ID: "proto:" + p, Label: protoLabel(p), Kind: "protocol", Count: c})
+	for p, b := range protoBytes {
+		nodes = append(nodes, topoNode{ID: "proto:" + p, Label: protoLabel(p), Kind: "protocol", Bytes: b})
 	}
-	nodes = append(nodes, topoNode{ID: "srv", Label: "服务器", Kind: "server", Count: total})
-	for s, c := range statusTotal {
-		nodes = append(nodes, topoNode{ID: "out:" + s, Label: statusLabel(s), Kind: s, Count: c})
+	nodes = append(nodes, topoNode{ID: "srv", Label: "服务器", Kind: "server", Bytes: serverBytes})
+	for s, b := range statusBytes {
+		nodes = append(nodes, topoNode{ID: "out:" + s, Label: statusLabel(s), Kind: s, Bytes: b})
 	}
-	for id, c := range targetCount {
-		nodes = append(nodes, topoNode{ID: id, Label: targetLabel[id], Kind: "target", Count: c})
+	for id, b := range targetNodeBytes {
+		nodes = append(nodes, topoNode{ID: id, Label: targetLabel[id], Kind: "target", Bytes: b})
 	}
 
-	linkCount := map[[3]string]int64{}
-	for pair, c := range userProto {
-		linkCount[[3]string{userKey(pair[0]), "proto:" + pair[1], ""}] += c
+	linkBytes := map[[3]string]int64{}
+	for pair, b := range userProto {
+		linkBytes[[3]string{userKey(pair[0]), "proto:" + pair[1], ""}] += b
 	}
-	for p, c := range protoTotal {
-		linkCount[[3]string{"proto:" + p, "srv", ""}] += c
+	for p, b := range protoBytes {
+		linkBytes[[3]string{"proto:" + p, "srv", ""}] += b
 	}
-	for s, c := range statusTotal {
-		linkCount[[3]string{"srv", "out:" + s, s}] += c
+	for s, b := range statusBytes {
+		linkBytes[[3]string{"srv", "out:" + s, s}] += b
 	}
-	for pair, c := range outTarget {
-		linkCount[[3]string{"out:" + pair[0], targetKey(pair[1]), pair[0]}] += c
+	for pair, b := range outTarget {
+		linkBytes[[3]string{"out:" + pair[0], targetKey(pair[1]), pair[0]}] += b
 	}
-	links := make([]topoLink, 0, len(linkCount))
-	for k, c := range linkCount {
-		links = append(links, topoLink{Source: k[0], Target: k[1], Status: k[2], Count: c})
+	links := make([]topoLink, 0, len(linkBytes))
+	for k, b := range linkBytes {
+		links = append(links, topoLink{Source: k[0], Target: k[1], Status: k[2], Bytes: b})
 	}
 
 	sort.Slice(nodes, func(i, j int) bool {
@@ -310,8 +333,8 @@ func buildTopology(rows []connGraphRow) ([]topoNode, []topoLink, map[string]int6
 		if li != lj {
 			return li < lj
 		}
-		if nodes[i].Count != nodes[j].Count {
-			return nodes[i].Count > nodes[j].Count
+		if nodes[i].Bytes != nodes[j].Bytes {
+			return nodes[i].Bytes > nodes[j].Bytes
 		}
 		return nodes[i].ID < nodes[j].ID
 	})
@@ -325,23 +348,22 @@ func buildTopology(rows []connGraphRow) ([]topoNode, []topoLink, map[string]int6
 		return links[i].Status < links[j].Status
 	})
 
-	// Map every (source,target) pair to its link index, then walk the original
-	// tuples to record which links belong to each user's path.
+	// Map every (source,target) pair to its link index, then walk the connection
+	// log to record which links belong to each user's path (for hover highlight).
 	linkIndex := make(map[[2]string]int, len(links))
 	for i, l := range links {
 		linkIndex[[2]string{l.Source, l.Target}] = i
 	}
 	pathSets := map[string]map[int]bool{}
-	for _, r := range rows {
+	for _, r := range connRows {
 		if r.Username == "" {
 			continue
 		}
-		user := r.Username
 		status := r.Status
 		if status == "" {
 			status = "unknown"
 		}
-		uk := userKey(user)
+		uk := userKey(r.Username)
 		pk := "proto:" + r.Protocol
 		outk := "out:" + status
 		tk := targetKey(normalizeTarget(r.Target))
@@ -366,7 +388,7 @@ func buildTopology(rows []connGraphRow) ([]topoNode, []topoLink, map[string]int6
 		userPaths[uk] = idxs
 	}
 
-	return nodes, links, statusTotal, userPaths
+	return nodes, links, statusBytes, userPaths
 }
 
 // topoLayer maps a node kind to its column: user=0, protocol=1, server=2,

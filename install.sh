@@ -22,7 +22,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.9.23"
+shell_version="1.6.9.24"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -81,8 +81,10 @@ panel_session_key="/etc/panel/panel.key"
 panel_listen_addr="127.0.0.1:2052"
 panel_v2ray_api_port="50085"
 panel_singbox_api_port="50086"
+panel_clash_api_port="50087"
 panel_geo_db="/etc/panel/ip2region_v4.xdb"
 singbox_log_file="/var/log/sing-box/sing-box.log"
+singbox_vmess_port_file="/etc/sing-box/vmess_port"
 nginx_ws_access_log="/var/log/nginx/ws-access.log"
 panel_repo="layfu/vmess_ws-tls_bash_onekey"
 # v2ray_plugin_version="$(wget -qO- "https://github.com/shadowsocks/v2ray-plugin/tags" | grep -E "/shadowsocks/v2ray-plugin/releases/tag/" | head -1 | sed -r 's/.*tag\/v(.+)\">.*/\1/')"
@@ -790,8 +792,8 @@ panel_geo_update() {
 panel_config_gen() {
     mkdir -p "${panel_conf_dir}" "${panel_db_dir}"
     local v2ray_enabled="false" singbox_enabled="false"
-    [[ -f "${v2ray_conf}" ]] && v2ray_enabled="true"
-    [[ -f "${singbox_conf}" ]] && singbox_enabled="true"
+    [[ -s "${vmess_users_file}" ]] && v2ray_enabled="true"
+    [[ -s "${anytls_users_file}" ]] && singbox_enabled="true"
     cat >"${panel_conf}" <<EOF
 {
   "listen": "${panel_listen_addr}",
@@ -807,19 +809,21 @@ panel_config_gen() {
   "login_lock_sec": 1800,
   "v2ray": {
     "enabled": ${v2ray_enabled},
-    "api_addr": "127.0.0.1:${panel_v2ray_api_port}",
-    "access_log": "/var/log/v2ray/access.log",
+    "api_addr": "127.0.0.1:${panel_singbox_api_port}",
+    "access_log": "",
     "ws_access_log": "${nginx_ws_access_log}",
-    "users_file": "/etc/v2ray/users",
-    "config_file": "/etc/v2ray/config.json",
+    "users_file": "${vmess_users_file}",
+    "config_file": "${singbox_conf}",
     "qr_file": "${v2ray_qr_config_file}"
   },
   "singbox": {
     "enabled": ${singbox_enabled},
     "api_addr": "127.0.0.1:${panel_singbox_api_port}",
     "log_file": "${singbox_log_file}",
-    "users_file": "/etc/sing-box/users",
-    "config_file": "/etc/sing-box/config.json",
+    "users_file": "${anytls_users_file}",
+    "vmess_users_file": "${vmess_users_file}",
+    "clash_api_addr": "127.0.0.1:${panel_clash_api_port}",
+    "config_file": "${singbox_conf}",
     "domain_file": "${anytls_domain_file}"
   }
 }
@@ -953,7 +957,7 @@ panel_install() {
     singbox_v2rayapi_ensure
     [[ -f "${v2ray_conf}" ]] && v2ray_conf_add
     [[ -f "${singbox_conf}" ]] && anytls_conf_add
-    systemctl restart v2ray >/dev/null 2>&1
+    systemctl restart sing-box >/dev/null 2>&1
     [[ -f "${singbox_systemd_file}" ]] && systemctl restart sing-box >/dev/null 2>&1
     systemctl enable panel >/dev/null 2>&1
     systemctl restart panel
@@ -1020,7 +1024,7 @@ panel_update() {
         singbox_v2rayapi_ensure
         [[ -f "${v2ray_conf}" ]] && v2ray_conf_add
         [[ -f "${singbox_conf}" ]] && anytls_conf_add
-        systemctl restart v2ray >/dev/null 2>&1
+        systemctl restart sing-box >/dev/null 2>&1
         [[ -f "${singbox_systemd_file}" ]] && systemctl restart sing-box >/dev/null 2>&1
         systemctl start panel >/dev/null 2>&1
         if systemctl is-active --quiet panel; then
@@ -1041,7 +1045,7 @@ panel_uninstall() {
     rm -f "${panel_bin_dir}"
     panel_nginx_location_del
     nginx_ws_access_log_del
-    [[ -f "${v2ray_conf}" ]] && v2ray_conf_add && systemctl restart v2ray >/dev/null 2>&1
+    [[ -f "${v2ray_conf}" ]] && v2ray_conf_add && systemctl restart sing-box >/dev/null 2>&1
     [[ -f "${singbox_conf}" ]] && anytls_conf_add && [[ -f "${singbox_systemd_file}" ]] && systemctl restart sing-box >/dev/null 2>&1
     systemctl restart nginx >/dev/null 2>&1
     systemctl daemon-reload
@@ -1684,21 +1688,53 @@ anytls_routing_menu() {
     done
 }
 
-anytls_conf_add() {
-    anytls_users_ensure
-    local users_json="" name password first=1
-    while read -r name password; do
-        [[ -z "${name}" ]] && continue
-        if [[ ${first} -eq 1 ]]; then
-            first=0
-        else
-            users_json="${users_json},"
-        fi
-        users_json="${users_json}{\"name\":\"${name}\",\"password\":\"${password}\"}"
-    done <"${anytls_users_file}"
+singbox_conf_add() {
+    # 伪装路径沿用 QR 配置（若存在）
+    local ws_path="${camouflage}"
+    [[ -f "${v2ray_qr_config_file}" ]] && ws_path="$(grep '\"path\"' "${v2ray_qr_config_file}" | awk -F '"' '{print $4}')"
+    [[ -n "${ws_path}" ]] && camouflage="${ws_path}"
 
-    [[ -z "${anytls_port}" ]] && anytls_port="$(grep '\"listen_port\"' "${singbox_conf}" 2>/dev/null | awk -F ':' '{print $2}' | tr -d ' ,')"
+    # AnyTLS 用户
+    local anytls_users_json="" name password first=1
+    if [[ -s "${anytls_users_file}" ]]; then
+        while read -r name password; do
+            [[ -z "${name}" ]] && continue
+            if [[ ${first} -eq 1 ]]; then first=0; else anytls_users_json="${anytls_users_json},"; fi
+            anytls_users_json="${anytls_users_json}{\"name\":\"${name}\",\"password\":\"${password}\"}"
+        done <"${anytls_users_file}"
+    fi
+
+    # VMess 用户：由 sing-box 承载，TLS/WS 仍由 Nginx 终止与反代
+    local vmess_users_json="" vname vuuid vfirst=1 vmess_inbound=""
+    if [[ -s "${vmess_users_file}" ]]; then
+        while read -r vname vuuid; do
+            [[ -z "${vname}" ]] && continue
+            if [[ ${vfirst} -eq 1 ]]; then vfirst=0; else vmess_users_json="${vmess_users_json},"; fi
+            vmess_users_json="${vmess_users_json}{\"name\":\"${vname}\",\"uuid\":\"${vuuid}\"}"
+        done <"${vmess_users_file}"
+        if [[ -n "${vmess_users_json}" ]]; then
+            local vmess_port=""
+            [[ -f "${singbox_vmess_port_file}" ]] && vmess_port="$(cat "${singbox_vmess_port_file}")"
+            [[ -z "${vmess_port}" ]] && vmess_port=$((RANDOM + 20000))
+            echo "${vmess_port}" >"${singbox_vmess_port_file}"
+            PORT="${vmess_port}"
+            vmess_inbound="{\"type\":\"vmess\",\"tag\":\"vmess-in\",\"listen\":\"127.0.0.1\",\"listen_port\":${vmess_port},\"users\":[${vmess_users_json}],\"transport\":{\"type\":\"ws\",\"path\":\"${camouflage}\"}}"
+        fi
+    fi
+
+    [[ -z "${anytls_port}" ]] && anytls_port="$(grep '\"listen_port\"' "${singbox_conf}" 2>/dev/null | tail -1 | awk -F ':' '{print $2}' | tr -d ' ,')"
     [[ -z "${anytls_port}" ]] && anytls_port="8443"
+
+    local anytls_inbound=""
+    if [[ -n "${anytls_users_json}" ]]; then
+        anytls_inbound="{\"type\":\"anytls\",\"tag\":\"anytls-in\",\"listen\":\"::\",\"listen_port\":${anytls_port},\"users\":[${anytls_users_json}],\"tls\":{\"enabled\":true,\"certificate_path\":\"/data/v2ray.crt\",\"key_path\":\"/data/v2ray.key\"}}"
+    fi
+
+    local inbounds_json="${vmess_inbound}"
+    if [[ -n "${anytls_inbound}" ]]; then
+        [[ -n "${inbounds_json}" ]] && inbounds_json="${inbounds_json},"
+        inbounds_json="${inbounds_json}${anytls_inbound}"
+    fi
 
     anytls_routing_load
     anytls_routing_ensure_geodata
@@ -1713,12 +1749,28 @@ anytls_conf_add() {
     \"output\": \"${singbox_log_file}\""
     fi
     if panel_installed && singbox_has_v2ray_api; then
-        local stats_users_json="" su first_su=1
-        while read -r su _; do
-            [[ -z "${su}" ]] && continue
-            if [[ ${first_su} -eq 1 ]]; then first_su=0; else stats_users_json="${stats_users_json},"; fi
-            stats_users_json="${stats_users_json}\"${su}\""
-        done <"${anytls_users_file}"
+        local stats_users_json="" su first_su=1 stats_inbounds_json=""
+        if [[ -n "${vmess_users_json}" ]]; then
+            stats_inbounds_json="\"vmess-in\""
+        fi
+        if [[ -n "${anytls_users_json}" ]]; then
+            [[ -n "${stats_inbounds_json}" ]] && stats_inbounds_json="${stats_inbounds_json},"
+            stats_inbounds_json="${stats_inbounds_json}\"anytls-in\""
+        fi
+        if [[ -s "${anytls_users_file}" ]]; then
+            while read -r su _; do
+                [[ -z "${su}" ]] && continue
+                if [[ ${first_su} -eq 1 ]]; then first_su=0; else stats_users_json="${stats_users_json},"; fi
+                stats_users_json="${stats_users_json}\"${su}\""
+            done <"${anytls_users_file}"
+        fi
+        if [[ -s "${vmess_users_file}" ]]; then
+            while read -r su _; do
+                [[ -z "${su}" ]] && continue
+                [[ -n "${stats_users_json}" ]] && stats_users_json="${stats_users_json},"
+                stats_users_json="${stats_users_json}\"${su}\""
+            done <"${vmess_users_file}"
+        fi
         panel_experimental=$(
             cat <<PANEL_EXP
 ,
@@ -1727,10 +1779,13 @@ anytls_conf_add() {
       "listen": "127.0.0.1:${panel_singbox_api_port}",
       "stats": {
         "enabled": true,
-        "inbounds": ["anytls-in"],
+        "inbounds": [${stats_inbounds_json}],
         "outbounds": ["direct", "block", "warp"],
         "users": [${stats_users_json}]
       }
+    },
+    "clash_api": {
+      "external_controller": "127.0.0.1:${panel_clash_api_port}"
     }
   }
 PANEL_EXP
@@ -1744,37 +1799,12 @@ PANEL_EXP
     "timestamp": true${panel_log_output}
   },
   "inbounds": [
-    {
-      "type": "anytls",
-      "tag": "anytls-in",
-      "listen": "::",
-      "listen_port": ${anytls_port},
-      "users": [
-        ${users_json}
-      ],
-      "tls": {
-        "enabled": true,
-        "certificate_path": "/data/v2ray.crt",
-        "key_path": "/data/v2ray.key"
-      }
-    }
+    ${inbounds_json}
   ],
   "outbounds": [
-    {
-      "type": "direct",
-      "tag": "direct"
-    },
-    {
-      "type": "block",
-      "tag": "block"
-    },
-    {
-      "type": "socks",
-      "tag": "warp",
-      "server": "127.0.0.1",
-      "server_port": ${warp_socks_port},
-      "version": "5"
-    }
+    { "type": "direct", "tag": "direct" },
+    { "type": "block", "tag": "block" },
+    { "type": "socks", "tag": "warp", "server": "127.0.0.1", "server_port": ${warp_socks_port}, "version": "5" }
   ],
   "route": {
     "rule_set": [
@@ -1789,6 +1819,8 @@ PANEL_EXP
 EOF
     judge "sing-box 配置写入"
 }
+anytls_conf_add() { singbox_conf_add; }
+v2ray_conf_add() { singbox_conf_add; }
 
 surge_config_output() {
     if [[ ! -f "${singbox_conf}" ]]; then
@@ -2070,7 +2102,7 @@ vmess_user_add() {
     fi
     echo "${user_name} $(cat /proc/sys/kernel/random/uuid)" >>"${vmess_users_file}"
     v2ray_conf_add
-    systemctl restart v2ray
+    systemctl restart sing-box
     judge "VMess 用户添加"
     v2ray_config_output
 }
@@ -2096,7 +2128,7 @@ vmess_user_del() {
     fi
     sed -i "/^${del_name} /d" "${vmess_users_file}"
     v2ray_conf_add
-    systemctl restart v2ray
+    systemctl restart sing-box
     judge "VMess 用户删除"
     v2ray_config_output
 }
@@ -2116,7 +2148,7 @@ vmess_user_uuid() {
     fi
     sed -i "s/^${chg_name} .*/${chg_name} $(cat /proc/sys/kernel/random/uuid)/" "${vmess_users_file}"
     v2ray_conf_add
-    systemctl restart v2ray
+    systemctl restart sing-box
     judge "VMess 用户 UUID 更换"
     v2ray_config_output
 }
@@ -2149,7 +2181,7 @@ vmess_user_rename() {
     sed -i "/^${old_name} /d" "${vmess_users_file}"
     echo "${new_name} ${old_uuid}" >>"${vmess_users_file}"
     v2ray_conf_add
-    systemctl restart v2ray
+    systemctl restart sing-box
     judge "VMess 用户名修改"
     v2ray_config_output
 }
@@ -2326,7 +2358,7 @@ block_domain_add() {
     mkdir -p /etc/v2ray
     echo "${domain_item}" >>"${block_domains_file}"
     v2ray_conf_add
-    systemctl restart v2ray
+    systemctl restart sing-box
     judge "屏蔽域名添加"
 }
 
@@ -2340,7 +2372,7 @@ block_domain_del() {
     [[ -z "${del_domain}" ]] && return 1
     sed -i "/^${del_domain}$/d" "${block_domains_file}"
     v2ray_conf_add
-    systemctl restart v2ray
+    systemctl restart sing-box
     judge "屏蔽域名删除"
 }
 
@@ -2368,7 +2400,7 @@ block_ip_add() {
     mkdir -p /etc/v2ray
     echo "${ip_item}" >>"${block_ips_file}"
     v2ray_conf_add
-    systemctl restart v2ray
+    systemctl restart sing-box
     judge "屏蔽 IP 添加"
 }
 
@@ -2382,7 +2414,7 @@ block_ip_del() {
     [[ -z "${del_ip}" ]] && return 1
     sed -i "/^${del_ip}$/d" "${block_ips_file}"
     v2ray_conf_add
-    systemctl restart v2ray
+    systemctl restart sing-box
     judge "屏蔽 IP 删除"
 }
 
@@ -2470,7 +2502,7 @@ warp_user_add() {
     mkdir -p /etc/v2ray
     echo "${warp_user}" >>"${warp_users_file}"
     v2ray_conf_add
-    systemctl restart v2ray
+    systemctl restart sing-box
     judge "WARP 用户添加"
 }
 
@@ -2484,7 +2516,7 @@ warp_user_del() {
     [[ -z "${del_user}" ]] && return 1
     sed -i "/^${del_user}$/d" "${warp_users_file}"
     v2ray_conf_add
-    systemctl restart v2ray
+    systemctl restart sing-box
     judge "WARP 用户删除"
 }
 
@@ -2548,21 +2580,21 @@ routing_menu() {
             if [[ "${block_cn}" == "1" ]]; then block_cn=0; else block_cn=1; fi
             routing_save
             v2ray_conf_add
-            systemctl restart v2ray
+            systemctl restart sing-box
             judge "禁止国内地址 切换"
             ;;
         2)
             if [[ "${block_ads}" == "1" ]]; then block_ads=0; else block_ads=1; fi
             routing_save
             v2ray_conf_add
-            systemctl restart v2ray
+            systemctl restart sing-box
             judge "禁止广告地址 切换"
             ;;
         3)
             if [[ "${block_bt}" == "1" ]]; then block_bt=0; else block_bt=1; fi
             routing_save
             v2ray_conf_add
-            systemctl restart v2ray
+            systemctl restart sing-box
             judge "禁止 BT 协议 切换"
             ;;
         4)
@@ -2584,7 +2616,7 @@ routing_menu() {
             fi
             routing_save
             v2ray_conf_add
-            systemctl restart v2ray
+            systemctl restart sing-box
             judge "WARP 出站模式 切换"
             ;;
         7)
@@ -2770,11 +2802,9 @@ EOF
 
 start_process_systemd() {
     systemctl daemon-reload
-    chown -R root:root /var/log/v2ray/
+    mkdir -p /var/log/sing-box
     systemctl restart nginx
     judge "Nginx 启动"
-    systemctl restart v2ray
-    judge "V2ray 启动"
     if [[ -f ${singbox_systemd_file} ]]; then
         systemctl restart sing-box
         judge "sing-box 启动"
@@ -2782,8 +2812,6 @@ start_process_systemd() {
 }
 
 enable_process_systemd() {
-    systemctl enable v2ray
-    judge "设置 v2ray 开机自启"
     systemctl enable nginx
     judge "设置 Nginx 开机自启"
     if [[ -f ${singbox_systemd_file} ]]; then
@@ -2794,7 +2822,6 @@ enable_process_systemd() {
 
 stop_process_systemd() {
     systemctl stop nginx
-    systemctl stop v2ray
     [[ -f ${singbox_systemd_file} ]] && systemctl stop sing-box
 }
 nginx_process_disabled() {
@@ -3168,12 +3195,10 @@ delete_tls_key_and_crt() {
 }
 judge_mode() {
     shell_mode="None"
-    if [ -f $v2ray_bin_dir ] || [ -f $v2ray_bin_dir_old/v2ray ]; then
-        if grep -q "ws" $v2ray_qr_config_file; then
-            shell_mode="ws"
-        fi
+    if [[ -s "${vmess_users_file}" ]] && grep -q "ws" "${v2ray_qr_config_file}" 2>/dev/null; then
+        shell_mode="ws"
     fi
-    if [[ -f "${singbox_conf}" ]]; then
+    if [[ -s "${anytls_users_file}" ]]; then
         if [[ "${shell_mode}" == "None" ]]; then
             shell_mode="anytls"
         else
@@ -3183,8 +3208,8 @@ judge_mode() {
 }
 install_v2ray_ws_tls() {
     is_root
-    if { [[ -f "${v2ray_bin_dir}" ]] || [[ -f "${v2ray_bin_dir_old}/v2ray" ]]; } && grep -q "ws" "${v2ray_qr_config_file}" 2>/dev/null; then
-        echo -e "${Error} ${RedBG} 已安装 V2Ray (vmess+ws+tls)，拒绝重复安装 ${Font}"
+    if [[ -f "${vmess_users_file}" ]] && [[ -s "${vmess_users_file}" ]]; then
+        echo -e "${Error} ${RedBG} 已安装 VMess (ws+tls)，拒绝重复安装 ${Font}"
         return 1
     fi
     check_system
@@ -3194,7 +3219,7 @@ install_v2ray_ws_tls() {
     domain_check
     old_config_exist_check
     port_alterid_set
-    v2ray_install
+    singbox_install
     port_exist_check 80
     port_exist_check "${port}"
     nginx_exist_check
@@ -3220,7 +3245,7 @@ install_v2ray_ws_tls() {
 }
 install_anytls() {
     is_root
-    if [[ -f "${singbox_conf}" ]]; then
+    if [[ -f "${anytls_users_file}" ]] && [[ -s "${anytls_users_file}" ]]; then
         echo -e "${Error} ${RedBG} 已安装 AnyTLS (sing-box)，拒绝重复安装 ${Font}"
         return 1
     fi
@@ -3845,9 +3870,9 @@ nginx_upgrade() {
 modify_camouflage_path() {
     [[ -z ${camouflage_path} ]] && camouflage_path=1
     sed -i "/location/c \\\tlocation \/${camouflage_path}\/" ${nginx_conf}          #Modify the camouflage path of the nginx configuration file
-    sed -i "/\"path\"/c \\\t  \"path\":\"\/${camouflage_path}\/\"" ${v2ray_conf}    #Modify the camouflage path of the v2ray configuration file
     [ -f ${v2ray_qr_config_file} ] && sed -i "/\"path\"/c \\  \"path\": \"\/${camouflage_path}\/\"," ${v2ray_qr_config_file}
-    judge "V2ray camouflage path modified"
+    v2ray_conf_add
+    judge "camouflage path modified"
 }
 
 section_title() {
@@ -3942,8 +3967,8 @@ install_menu() {
     while true; do
         clear_screen
         section_title "安装与升级"
-        echo -e "${Green}1.${Font} 安装 V2Ray (Nginx+ws+tls)"
-        echo -e "${Green}2.${Font} 升级 V2Ray"
+        echo -e "${Green}1.${Font} 安装 VMess (Nginx+ws+tls, sing-box 内核)"
+        echo -e "${Green}2.${Font} 升级 V2Ray (已弃用)"
         echo -e "${Green}3.${Font} 安装 AnyTLS (sing-box)"
         echo -e "${Green}4.${Font} 升级 sing-box"
         echo -e "${Green}5.${Font} 升级 Nginx"
@@ -3959,7 +3984,7 @@ install_menu() {
             install_v2ray_ws_tls
             ;;
         2)
-            v2ray_update
+            echo -e "${Error} ${RedBG} 已弃用：VMess 现由 sing-box 承载，请使用「升级 sing-box」 ${Font}"
             ;;
         3)
             install_anytls
@@ -4026,7 +4051,7 @@ v2ray_config_menu() {
             start_process_systemd
             ;;
         5)
-            routing_menu
+            anytls_routing_menu
             continue
             ;;
         0)

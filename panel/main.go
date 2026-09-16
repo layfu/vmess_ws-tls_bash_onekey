@@ -47,8 +47,14 @@ func main() {
 	go col.run(ctx, time.Duration(cfg.PollIntervalSec)*time.Second)
 	startLogTailers(st, cfg)
 
+	if cfg.SingBox.Enabled && cfg.SingBox.ClashAPIAddr != "" {
+		cp := newClashPoller(st, cfg.SingBox.ClashAPIAddr)
+		go cp.run(ctx, 2*time.Second)
+	}
+
 	st.prune(24*time.Hour, 20000)
 	st.pruneHourly(time.Duration(cfg.RetentionDays) * 24 * time.Hour)
+	st.pruneTargetTraffic(time.Duration(cfg.RetentionDays) * 24 * time.Hour)
 	go func() {
 		t := time.NewTicker(time.Hour)
 		defer t.Stop()
@@ -59,6 +65,7 @@ func main() {
 			case <-t.C:
 				st.prune(24*time.Hour, 20000)
 				st.pruneHourly(time.Duration(cfg.RetentionDays) * 24 * time.Hour)
+				st.pruneTargetTraffic(time.Duration(cfg.RetentionDays) * 24 * time.Hour)
 			}
 		}
 	}()

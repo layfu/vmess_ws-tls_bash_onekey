@@ -6,15 +6,17 @@ import (
 )
 
 type ProtocolConfig struct {
-	Enabled     bool   `json:"enabled"`
-	APIAddr     string `json:"api_addr"`
-	AccessLog   string `json:"access_log"`
-	WSAccessLog string `json:"ws_access_log"`
-	LogFile     string `json:"log_file"`
-	UsersFile   string `json:"users_file"`
-	ConfigFile  string `json:"config_file"`
-	QrFile      string `json:"qr_file"`
-	DomainFile  string `json:"domain_file"`
+	Enabled        bool   `json:"enabled"`
+	APIAddr        string `json:"api_addr"`
+	AccessLog      string `json:"access_log"`
+	WSAccessLog    string `json:"ws_access_log"`
+	LogFile        string `json:"log_file"`
+	UsersFile      string `json:"users_file"`
+	VMessUsersFile string `json:"vmess_users_file"`
+	ClashAPIAddr   string `json:"clash_api_addr"`
+	ConfigFile     string `json:"config_file"`
+	QrFile         string `json:"qr_file"`
+	DomainFile     string `json:"domain_file"`
 }
 
 type Config struct {

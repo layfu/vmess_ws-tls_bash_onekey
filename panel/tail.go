@@ -139,24 +139,28 @@ func parseSingboxOutbound(line string) (id, status string, ok bool) {
 	return idm[1], status, true
 }
 
-// singboxMatcher correlates the AnyTLS inbound connection line with its
+// singboxMatcher correlates a sing-box inbound connection line with its
 // outbound line by the shared log connection id, so the panel can record the
-// routing result (direct / warp / blocked) for each connection.
+// routing result (direct / warp / blocked) for each connection. It handles both
+// the VMess (WS, behind nginx) and AnyTLS inbounds; VMess sources are rewritten
+// to the real client IP via the nginx WebSocket log correlator.
 type singboxMatcher struct {
 	store   *store
+	corr    *correlator
 	mu      sync.Mutex
 	pending map[string]sbPending
 }
 
 type sbPending struct {
-	user   string
-	source string
-	target string
-	ts     int64
+	protocol string
+	user     string
+	source   string
+	target   string
+	ts       int64
 }
 
-func newSingboxMatcher(st *store) *singboxMatcher {
-	return &singboxMatcher{store: st, pending: make(map[string]sbPending)}
+func newSingboxMatcher(st *store, corr *correlator) *singboxMatcher {
+	return &singboxMatcher{store: st, corr: corr, pending: make(map[string]sbPending)}
 }
 
 func (m *singboxMatcher) handle(line string) {
@@ -168,13 +172,20 @@ func (m *singboxMatcher) handle(line string) {
 		}
 		m.mu.Unlock()
 		if found {
-			_ = m.store.addConnection("anytls", p.user, p.source, p.target, status, time.Unix(p.ts, 0))
+			_ = m.store.addConnection(p.protocol, p.user, p.source, p.target, status, time.Unix(p.ts, 0))
+			if p.protocol == "vmess" && m.corr != nil && p.source != "" {
+				m.corr.addVmess(p.ts, p.user, p.target, p.source)
+			}
 		}
 		return
 	}
 	if id, user, source, target, ok := parseSingboxInbound(line); ok {
+		protocol := "anytls"
+		if strings.Contains(line, "inbound/vmess") || strings.Contains(line, "vmess-in") {
+			protocol = "vmess"
+		}
 		m.mu.Lock()
-		m.pending[id] = sbPending{user: user, source: source, target: target, ts: time.Now().Unix()}
+		m.pending[id] = sbPending{protocol: protocol, user: user, source: source, target: target, ts: time.Now().Unix()}
 		m.pruneLocked()
 		m.mu.Unlock()
 	}
@@ -223,7 +234,7 @@ func startLogTailers(st *store, cfg *Config) {
 		})
 	}
 	if cfg.SingBox.Enabled && cfg.SingBox.LogFile != "" {
-		sb := newSingboxMatcher(st)
+		sb := newSingboxMatcher(st, corr)
 		go followFile(cfg.SingBox.LogFile, sb.handle)
 	}
 }

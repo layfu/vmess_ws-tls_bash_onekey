@@ -114,9 +114,10 @@ jobs:
           git fetch --depth 1 origin "refs/tags/${TAG}:refs/tags/${TAG}"
           git checkout "${TAG}"
 
-      - name: Patch AnyTLS inbound log (include source address)
+      - name: Patch AnyTLS/VMess inbound log (include source address)
         run: |
           sed -i 's/inbound connection to ", metadata.Destination)/inbound connection from ", metadata.Source, " to ", metadata.Destination)/g' protocol/anytls/inbound.go
+          sed -i 's/\[", user, "\] inbound connection to ", metadata.Destination)/[", user, "] inbound connection from ", metadata.Source, " to ", metadata.Destination)/g' protocol/vmess/inbound.go
 
       - uses: actions/setup-go@v5
         with:

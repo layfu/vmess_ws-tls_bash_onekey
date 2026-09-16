@@ -181,7 +181,7 @@ func TestSingboxMatcher(t *testing.T) {
 	}
 	defer st.Close()
 
-	m := newSingboxMatcher(st)
+	m := newSingboxMatcher(st, nil)
 
 	// inbound + outbound (warp)
 	m.handle("+0800 2026-08-27 12:00:00 INFO [1 5ms] inbound/anytls[anytls-in]: [alice] inbound connection from 1.2.3.4:1000 to video-s.twimg.com:443")
@@ -274,33 +274,37 @@ func TestConnectionGraph(t *testing.T) {
 }
 
 func TestBuildTopology(t *testing.T) {
-	rows := []connGraphRow{
+	userRows := []userTrafficRow{
+		{Protocol: "vmess", Username: "alice", Uplink: 100, Downlink: 200},
+		{Protocol: "anytls", Username: "bob", Uplink: 50, Downlink: 50},
+	}
+	targetRows := []targetTrafficRow{
+		{Protocol: "vmess", Host: "example.com", Status: "direct", Uplink: 100, Downlink: 200},
+		{Protocol: "anytls", Host: "ads.com", Status: "blocked", Uplink: 50, Downlink: 50},
+	}
+	connRows := []connGraphRow{
 		{Username: "alice", Protocol: "vmess", Status: "direct", Target: "example.com:443", Count: 5},
-		{Username: "alice", Protocol: "vmess", Status: "warp", Target: "video.com:443", Count: 2},
 		{Username: "bob", Protocol: "anytls", Status: "blocked", Target: "ads.com:443", Count: 3},
 	}
-	nodes, links, totals, userPaths := buildTopology(rows)
+	nodes, links, totals, userPaths := buildTopology(userRows, targetRows, connRows)
 
-	if totals["direct"] != 5 || totals["warp"] != 2 || totals["blocked"] != 3 {
+	if totals["direct"] != 300 || totals["blocked"] != 100 {
 		t.Errorf("totals = %+v", totals)
-	}
-	if len(nodes) != 2+2+1+3+3 { // users + protocols + server + statuses + targets
-		t.Errorf("expected 11 nodes, got %d: %+v", len(nodes), nodes)
 	}
 	byID := map[string]topoNode{}
 	for _, n := range nodes {
 		byID[n.ID] = n
 	}
-	if n := byID["srv"]; n.Kind != "server" || n.Count != 10 {
+	if n := byID["srv"]; n.Kind != "server" || n.Bytes != 400 {
 		t.Errorf("server node = %+v", n)
 	}
-	if n := byID["user:alice"]; n.Count != 7 {
+	if n := byID["user:alice"]; n.Bytes != 300 {
 		t.Errorf("alice node = %+v", n)
 	}
-	if n := byID["out:direct"]; n.Label != "直连" || n.Count != 5 {
+	if n := byID["out:direct"]; n.Label != "直连" || n.Bytes != 300 {
 		t.Errorf("direct node = %+v", n)
 	}
-	if n := byID["target:example.com"]; n.Count != 5 {
+	if n := byID["target:example.com"]; n.Bytes != 300 {
 		t.Errorf("example.com node = %+v", n)
 	}
 	if _, ok := byID["user:未知用户"]; ok {
@@ -309,13 +313,12 @@ func TestBuildTopology(t *testing.T) {
 
 	linkByKey := map[string]int64{}
 	for _, l := range links {
-		linkByKey[l.Source+"->"+l.Target] = l.Count
+		linkByKey[l.Source+"->"+l.Target] = l.Bytes
 	}
-	if linkByKey["srv->out:direct"] != 5 || linkByKey["out:warp->target:video.com"] != 2 {
+	if linkByKey["srv->out:direct"] != 300 || linkByKey["out:blocked->target:ads.com"] != 100 {
 		t.Errorf("links = %+v", links)
 	}
 
-	// alice's full path must cover both of her routes (direct and warp).
 	alice := map[string]bool{}
 	for _, i := range userPaths["user:alice"] {
 		if i < 0 || i >= len(links) {
@@ -327,9 +330,7 @@ func TestBuildTopology(t *testing.T) {
 		"user:alice->proto:vmess",
 		"proto:vmess->srv",
 		"srv->out:direct",
-		"srv->out:warp",
 		"out:direct->target:example.com",
-		"out:warp->target:video.com",
 	} {
 		if !alice[want] {
 			t.Errorf("alice path missing %q; got %+v", want, alice)
@@ -346,17 +347,21 @@ func TestBuildTopology(t *testing.T) {
 }
 
 func TestBuildTopologySkipsUnknownUser(t *testing.T) {
-	rows := []connGraphRow{
-		{Username: "alice", Protocol: "vmess", Status: "direct", Target: "example.com:443", Count: 5},
-		{Username: "", Protocol: "vmess", Status: "api", Target: "127.0.0.1:0", Count: 3},
+	userRows := []userTrafficRow{
+		{Protocol: "vmess", Username: "alice", Uplink: 5, Downlink: 5},
+		{Protocol: "vmess", Username: "", Uplink: 3, Downlink: 0},
 	}
-	nodes, _, totals, userPaths := buildTopology(rows)
-	if totals["api"] != 0 || totals["direct"] != 5 {
+	targetRows := []targetTrafficRow{
+		{Protocol: "vmess", Host: "example.com", Status: "direct", Uplink: 5, Downlink: 5},
+		{Protocol: "vmess", Host: "127.0.0.1", Status: "api", Uplink: 3, Downlink: 0},
+	}
+	nodes, _, totals, userPaths := buildTopology(userRows, targetRows, nil)
+	if totals["direct"] != 10 {
 		t.Errorf("totals = %+v", totals)
 	}
 	for _, n := range nodes {
-		if n.ID == "user:未知用户" || n.ID == "target:127.0.0.1" {
-			t.Errorf("internal connection leaked into topology: %+v", n)
+		if n.ID == "user:未知用户" {
+			t.Errorf("unknown user leaked into topology: %+v", n)
 		}
 	}
 	if _, ok := userPaths["user:未知用户"]; ok {
@@ -365,17 +370,30 @@ func TestBuildTopologySkipsUnknownUser(t *testing.T) {
 }
 
 func TestBuildTopologyOtherBuckets(t *testing.T) {
-	var rows []connGraphRow
+	var userRows []userTrafficRow
+	var targetRows []targetTrafficRow
+	var connRows []connGraphRow
 	for i := 0; i < 12; i++ {
-		rows = append(rows, connGraphRow{
+		userRows = append(userRows, userTrafficRow{
+			Protocol: "vmess",
+			Username: fmt.Sprintf("u%02d", i),
+			Uplink:   int64(100 - i),
+		})
+		targetRows = append(targetRows, targetTrafficRow{
+			Protocol: "vmess",
+			Host:     fmt.Sprintf("t%02d.com", i),
+			Status:   "direct",
+			Uplink:   int64(100 - i),
+		})
+		connRows = append(connRows, connGraphRow{
 			Username: fmt.Sprintf("u%02d", i),
 			Protocol: "vmess",
 			Status:   "direct",
 			Target:   fmt.Sprintf("t%02d.com:443", i),
-			Count:    int64(100 - i),
+			Count:    1,
 		})
 	}
-	nodes, links, _, userPaths := buildTopology(rows)
+	nodes, links, _, userPaths := buildTopology(userRows, targetRows, connRows)
 	byID := map[string]topoNode{}
 	for _, n := range nodes {
 		byID[n.ID] = n
