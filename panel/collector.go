@@ -148,6 +148,7 @@ func (c *collector) poll(ctx context.Context) {
 		}
 		if ps.readOutbound {
 			c.collectOutbound(counters, now)
+			c.collectInbound(counters, now)
 		}
 	}
 }
@@ -183,6 +184,44 @@ func (c *collector) collectOutbound(counters map[string]int64, now time.Time) {
 		}
 		_ = c.store.saveCounter("outbound", tag, "up", up)
 		_ = c.store.saveCounter("outbound", tag, "down", down)
+	}
+}
+
+// inboundTagProtocol maps the sing-box inbound tags to protocols, so the
+// topology's protocol layer is measured accurately per protocol (the per-user
+// stats are shared by name across protocols and can't be split).
+var inboundTagProtocol = []struct{ tag, protocol string }{
+	{"vmess-in", "vmess"},
+	{"anytls-in", "anytls"},
+}
+
+// collectInbound records per-protocol byte deltas from the inbound stats.
+func (c *collector) collectInbound(counters map[string]int64, now time.Time) {
+	hour := now.Truncate(time.Hour).Unix()
+	for _, it := range inboundTagProtocol {
+		up := counters["inbound>>>"+it.tag+">>>traffic>>>uplink"]
+		down := counters["inbound>>>"+it.tag+">>>traffic>>>downlink"]
+		c.mu.Lock()
+		lastUp := c.counters["inbound|"+it.protocol+"|up"]
+		lastDown := c.counters["inbound|"+it.protocol+"|down"]
+		dUp := up - lastUp
+		dDown := down - lastDown
+		if dUp < 0 {
+			dUp = up
+		}
+		if dDown < 0 {
+			dDown = down
+		}
+		c.counters["inbound|"+it.protocol+"|up"] = up
+		c.counters["inbound|"+it.protocol+"|down"] = down
+		c.mu.Unlock()
+		if dUp != 0 || dDown != 0 {
+			if err := c.store.addInboundTraffic(it.protocol, hour, dUp, dDown); err != nil {
+				log.Printf("store addInboundTraffic: %v", err)
+			}
+		}
+		_ = c.store.saveCounter("inbound", it.protocol, "up", up)
+		_ = c.store.saveCounter("inbound", it.protocol, "down", down)
 	}
 }
 

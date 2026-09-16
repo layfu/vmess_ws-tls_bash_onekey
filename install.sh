@@ -22,7 +22,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.9.31"
+shell_version="1.6.9.32"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -4144,7 +4144,7 @@ panel_traffic_reset() {
     systemctl stop panel >/dev/null 2>&1
     # 注意：不清 counters（增量基线），否则下一轮会把累计值当增量写入产生尖峰。
     if sqlite3 "${panel_db}" \
-        "DELETE FROM hourly; DELETE FROM totals; DELETE FROM target_traffic; DELETE FROM outbound_hourly;"; then
+        "DELETE FROM hourly; DELETE FROM totals; DELETE FROM target_traffic; DELETE FROM outbound_hourly; DELETE FROM inbound_hourly;"; then
         systemctl start panel >/dev/null 2>&1
         echo -e "${OK} ${GreenBG} 已清空流量统计，面板已重启（数值从此刻重新累积） ${Font}"
     else

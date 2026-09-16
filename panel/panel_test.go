@@ -287,7 +287,8 @@ func TestBuildTopology(t *testing.T) {
 		{Username: "alice", Protocol: "vmess", Status: "direct", Target: "example.com:443", Count: 5},
 		{Username: "bob", Protocol: "anytls", Status: "blocked", Target: "ads.com:443", Count: 3},
 	}
-	nodes, links, totals, userPaths := buildTopology(userRows, targetRows, outboundBytes, connRows)
+	inboundBytes := map[string]int64{"vmess": 300, "anytls": 100}
+	nodes, links, totals, userPaths := buildTopology(userRows, targetRows, outboundBytes, inboundBytes, connRows)
 
 	// direct is bytes (outbound stats), blocked is attempts (count).
 	if totals["direct"] != 300 || totals["blocked"] != 3 {
@@ -368,7 +369,7 @@ func TestBuildTopologyScalesTargetsToOutbound(t *testing.T) {
 		{Protocol: "vmess", Host: "b.com", Status: "warp", Uplink: 40, Downlink: 0},
 	}
 	outboundBytes := map[string]int64{"warp": 400}
-	nodes, _, _, _ := buildTopology(userRows, targetRows, outboundBytes, nil)
+	nodes, _, _, _ := buildTopology(userRows, targetRows, outboundBytes, nil, nil)
 	byID := map[string]topoNode{}
 	for _, n := range nodes {
 		byID[n.ID] = n
@@ -384,6 +385,33 @@ func TestBuildTopologyScalesTargetsToOutbound(t *testing.T) {
 	}
 }
 
+func TestBuildTopologyProtocolUsesInbound(t *testing.T) {
+	// Same username on both protocols: the user node is the combined per-user
+	// total, while each protocol node comes from the accurate inbound stats.
+	userRows := []userTrafficRow{
+		{Protocol: "vmess", Username: "admin", Uplink: 100, Downlink: 0},
+	}
+	targetRows := []targetTrafficRow{
+		{Protocol: "vmess", Host: "a.com", Status: "warp", Uplink: 100, Downlink: 0},
+	}
+	outboundBytes := map[string]int64{"warp": 100}
+	inboundBytes := map[string]int64{"vmess": 70, "anytls": 30}
+	nodes, _, _, _ := buildTopology(userRows, targetRows, outboundBytes, inboundBytes, nil)
+	byID := map[string]topoNode{}
+	for _, n := range nodes {
+		byID[n.ID] = n
+	}
+	if n := byID["user:admin"]; n.Value != 100 {
+		t.Errorf("user node = %+v (want 100, combined)", n)
+	}
+	if n := byID["proto:vmess"]; n.Value != 70 {
+		t.Errorf("vmess proto = %+v (want 70, inbound)", n)
+	}
+	if n := byID["proto:anytls"]; n.Value != 30 {
+		t.Errorf("anytls proto = %+v (want 30, inbound)", n)
+	}
+}
+
 func TestBuildTopologySkipsUnknownUser(t *testing.T) {
 	userRows := []userTrafficRow{
 		{Protocol: "vmess", Username: "alice", Uplink: 5, Downlink: 5},
@@ -393,7 +421,7 @@ func TestBuildTopologySkipsUnknownUser(t *testing.T) {
 		{Protocol: "vmess", Host: "example.com", Status: "direct", Uplink: 5, Downlink: 5},
 	}
 	outboundBytes := map[string]int64{"direct": 10}
-	nodes, _, totals, userPaths := buildTopology(userRows, targetRows, outboundBytes, nil)
+	nodes, _, totals, userPaths := buildTopology(userRows, targetRows, outboundBytes, nil, nil)
 	if totals["direct"] != 10 {
 		t.Errorf("totals = %+v", totals)
 	}
@@ -432,7 +460,7 @@ func TestBuildTopologyOtherBuckets(t *testing.T) {
 		})
 	}
 	outboundBytes := map[string]int64{"direct": 1200}
-	nodes, links, _, userPaths := buildTopology(userRows, targetRows, outboundBytes, connRows)
+	nodes, links, _, userPaths := buildTopology(userRows, targetRows, outboundBytes, nil, connRows)
 	byID := map[string]topoNode{}
 	for _, n := range nodes {
 		byID[n.ID] = n

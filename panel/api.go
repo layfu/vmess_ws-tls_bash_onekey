@@ -185,12 +185,17 @@ func (a *api) topology(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	inboundBytes, err := a.store.inboundTraffic(since)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	connRows, err := a.store.connectionGraph(since)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	nodes, links, totals, userPaths := buildTopology(userRows, targetRows, outboundBytes, connRows)
+	nodes, links, totals, userPaths := buildTopology(userRows, targetRows, outboundBytes, inboundBytes, connRows)
 	if nodes == nil {
 		nodes = []topoNode{}
 	}
@@ -219,7 +224,7 @@ func (a *api) topology(w http.ResponseWriter, r *http.Request) {
 // v2ray_api outbound stats, and the Clash per-target sample is scaled to match.
 // Blocked is measured in attempts (count). Users/targets beyond the top N are
 // merged into an "其他" node. userPaths maps a user node to its route links.
-func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, outboundBytes map[string]int64, connRows []connGraphRow) ([]topoNode, []topoLink, map[string]int64, map[string][]int) {
+func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, outboundBytes map[string]int64, inboundBytes map[string]int64, connRows []connGraphRow) ([]topoNode, []topoLink, map[string]int64, map[string][]int) {
 	userBytes := map[string]int64{}
 	protoBytes := map[string]int64{}
 	userProto := map[[2]string]int64{}
@@ -233,9 +238,18 @@ func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, out
 			continue
 		}
 		userBytes[r.Username] += b
-		protoBytes[r.Protocol] += b
 		userProto[[2]string{r.Username, r.Protocol}] += b
 		total += b
+	}
+	// 协议层用 inbound 统计（按协议准确，同名用户跨协议也不会错）；
+	// 没有 inbound 数据的协议回退到用户统计汇总。
+	for p, b := range inboundBytes {
+		protoBytes[p] = b
+	}
+	for pair, b := range userProto {
+		if _, ok := protoBytes[pair[1]]; !ok {
+			protoBytes[pair[1]] += b
+		}
 	}
 
 	// Clash per-status and per (status,host) sample bytes.

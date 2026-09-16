@@ -58,6 +58,7 @@ func main() {
 	st.pruneHourly(time.Duration(cfg.RetentionDays) * 24 * time.Hour)
 	st.pruneTargetTraffic(time.Duration(cfg.RetentionDays) * 24 * time.Hour)
 	st.pruneOutboundTraffic(time.Duration(cfg.RetentionDays) * 24 * time.Hour)
+	st.pruneInboundTraffic(time.Duration(cfg.RetentionDays) * 24 * time.Hour)
 	go func() {
 		t := time.NewTicker(time.Hour)
 		defer t.Stop()
@@ -70,6 +71,7 @@ func main() {
 				st.pruneHourly(time.Duration(cfg.RetentionDays) * 24 * time.Hour)
 				st.pruneTargetTraffic(time.Duration(cfg.RetentionDays) * 24 * time.Hour)
 				st.pruneOutboundTraffic(time.Duration(cfg.RetentionDays) * 24 * time.Hour)
+				st.pruneInboundTraffic(time.Duration(cfg.RetentionDays) * 24 * time.Hour)
 			}
 		}
 	}()
