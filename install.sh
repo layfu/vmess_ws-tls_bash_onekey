@@ -22,7 +22,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.9.33"
+shell_version="1.6.9.34"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -1063,6 +1063,38 @@ anytls_gen_password() {
     head -c 16 /dev/urandom | md5sum | head -c 16
 }
 
+# 用户名合法性：非空、无空格、无冒号（冒号用于 sing-box 内部的协议前缀 v:/a:）。
+check_user_name() {
+    local name="$1"
+    if [[ -z "${name}" ]]; then
+        echo -e "${Error} ${RedBG} 用户名不能为空 ${Font}"
+        return 1
+    fi
+    if [[ "${name}" =~ [[:space:]] ]]; then
+        echo -e "${Error} ${RedBG} 用户名不能包含空格 ${Font}"
+        return 1
+    fi
+    if [[ "${name}" == *:* ]]; then
+        echo -e "${Error} ${RedBG} 用户名不能包含冒号 :（用于协议区分） ${Font}"
+        return 1
+    fi
+    return 0
+}
+
+# 跨协议同名提醒：若同名已存在于另一个协议，提示并二次确认（视为同一用户，流量合并）。
+confirm_cross_protocol_name() {
+    local name="$1" other_file="$2" other_label="$3"
+    if [[ -s "${other_file}" ]] && grep -q "^${name} " "${other_file}"; then
+        echo -e "${OK} ${Green} 提示：用户名 ${name} 已存在于 ${other_label}，将视为同一用户，流量在拓扑中合并统计。 ${Font}"
+        read -rp "确认继续? [y/N]: " confirm_cross
+        case "${confirm_cross}" in
+        [yY][eE][sS] | [yY]) return 0 ;;
+        *) return 1 ;;
+        esac
+    fi
+    return 0
+}
+
 anytls_users_ensure() {
     if [[ ! -f "${anytls_users_file}" ]]; then
         mkdir -p "${singbox_conf_dir}"
@@ -1098,14 +1130,12 @@ anytls_user_add() {
     done
     read -rp "请输入用户名（default:user${next_num}）:" user_name
     [[ -z "${user_name}" ]] && user_name="user${next_num}"
-    if [[ "${user_name}" =~ [[:space:]] ]]; then
-        echo -e "${Error} ${RedBG} 用户名不能包含空格 ${Font}"
-        return 1
-    fi
+    check_user_name "${user_name}" || return 1
     if grep -q "^${user_name} " "${anytls_users_file}"; then
         echo -e "${Error} ${RedBG} 用户 ${user_name} 已存在 ${Font}"
         return 1
     fi
+    confirm_cross_protocol_name "${user_name}" "${vmess_users_file}" "VMess" || return 1
     echo "${user_name} $(anytls_gen_password)" >>"${anytls_users_file}"
     anytls_conf_add
     systemctl restart sing-box
@@ -1174,14 +1204,12 @@ anytls_user_rename() {
     fi
     read -rp "请输入新的用户名:" new_name
     [[ -z "${new_name}" ]] && return 1
-    if [[ "${new_name}" =~ [[:space:]] ]]; then
-        echo -e "${Error} ${RedBG} 用户名不能包含空格 ${Font}"
-        return 1
-    fi
+    check_user_name "${new_name}" || return 1
     if grep -q "^${new_name} " "${anytls_users_file}"; then
         echo -e "${Error} ${RedBG} 用户 ${new_name} 已存在 ${Font}"
         return 1
     fi
+    confirm_cross_protocol_name "${new_name}" "${vmess_users_file}" "VMess" || return 1
     local old_password
     old_password="$(grep "^${old_name} " "${anytls_users_file}" | head -1 | awk '{print $2}')"
     sed -i "/^${old_name} /d" "${anytls_users_file}"
@@ -1311,12 +1339,13 @@ anytls_routing_rules_gen() {
     [[ -n "${ips_json}" ]] && _anytls_rules_append "{\"ip_cidr\":[${ips_json}],\"outbound\":\"block\"}"
 
     if [[ "${anytls_warp_mode}" == "user" ]]; then
-        local warp_users_json="" u first_u=1
+        # 用户名校验：配置里的用户名带 v:/a: 前缀，这里对名单里每个用户两个前缀都加，
+        # 使 WARP 对该用户的 VMess 与 AnyTLS 流量都生效。
+        local warp_users_json="" u
         if [[ -f "${anytls_warp_users_file}" ]]; then
             while read -r u; do
                 [[ -z "${u}" ]] && continue
-                if [[ ${first_u} -eq 1 ]]; then first_u=0; else warp_users_json="${warp_users_json},"; fi
-                warp_users_json="${warp_users_json}\"${u}\""
+                warp_users_json="${warp_users_json}${warp_users_json:+,}\"v:${u}\",\"a:${u}\""
             done <"${anytls_warp_users_file}"
         fi
         [[ -n "${warp_users_json}" ]] && _anytls_rules_append "{\"auth_user\":[${warp_users_json}],\"outbound\":\"warp\"}"
@@ -1702,7 +1731,7 @@ singbox_conf_add() {
         while read -r name password; do
             [[ -z "${name}" ]] && continue
             if [[ ${first} -eq 1 ]]; then first=0; else anytls_users_json="${anytls_users_json},"; fi
-            anytls_users_json="${anytls_users_json}{\"name\":\"${name}\",\"password\":\"${password}\"}"
+            anytls_users_json="${anytls_users_json}{\"name\":\"a:${name}\",\"password\":\"${password}\"}"
         done <"${anytls_users_file}"
     fi
 
@@ -1712,7 +1741,7 @@ singbox_conf_add() {
         while read -r vname vuuid; do
             [[ -z "${vname}" ]] && continue
             if [[ ${vfirst} -eq 1 ]]; then vfirst=0; else vmess_users_json="${vmess_users_json},"; fi
-            vmess_users_json="${vmess_users_json}{\"name\":\"${vname}\",\"uuid\":\"${vuuid}\"}"
+            vmess_users_json="${vmess_users_json}{\"name\":\"v:${vname}\",\"uuid\":\"${vuuid}\"}"
         done <"${vmess_users_file}"
         if [[ -n "${vmess_users_json}" ]]; then
             local vmess_port=""
@@ -1758,7 +1787,6 @@ singbox_conf_add() {
     fi
     if panel_installed && singbox_has_v2ray_api; then
         local stats_users_json="" su first_su=1 stats_inbounds_json=""
-        local -A stats_seen=()
         if [[ -n "${vmess_users_json}" ]]; then
             stats_inbounds_json="\"vmess-in\""
         fi
@@ -1766,23 +1794,20 @@ singbox_conf_add() {
             [[ -n "${stats_inbounds_json}" ]] && stats_inbounds_json="${stats_inbounds_json},"
             stats_inbounds_json="${stats_inbounds_json}\"anytls-in\""
         fi
-        # 同名用户在 VMess/AnyTLS 共用同一个 user>>> 计数器，去重避免重复统计。
+        # 用户名按协议加前缀（v:/a:），使 sing-box 的 user>>> 计数器按协议独立，
+        # 从而能精确统计「某用户在某协议的流量」；面板读取时去掉前缀还原显示名。
         if [[ -s "${anytls_users_file}" ]]; then
             while read -r su _; do
                 [[ -z "${su}" ]] && continue
-                [[ -n "${stats_seen[$su]:-}" ]] && continue
-                stats_seen[$su]=1
                 if [[ ${first_su} -eq 1 ]]; then first_su=0; else stats_users_json="${stats_users_json},"; fi
-                stats_users_json="${stats_users_json}\"${su}\""
+                stats_users_json="${stats_users_json}\"a:${su}\""
             done <"${anytls_users_file}"
         fi
         if [[ -s "${vmess_users_file}" ]]; then
             while read -r su _; do
                 [[ -z "${su}" ]] && continue
-                [[ -n "${stats_seen[$su]:-}" ]] && continue
-                stats_seen[$su]=1
                 if [[ ${first_su} -eq 1 ]]; then first_su=0; else stats_users_json="${stats_users_json},"; fi
-                stats_users_json="${stats_users_json}\"${su}\""
+                stats_users_json="${stats_users_json}\"v:${su}\""
             done <"${vmess_users_file}"
         fi
         panel_experimental=$(
@@ -2109,14 +2134,12 @@ vmess_user_add() {
     done
     read -rp "请输入用户名（default:user${next_num}）:" user_name
     [[ -z "${user_name}" ]] && user_name="user${next_num}"
-    if [[ "${user_name}" =~ [[:space:]] ]]; then
-        echo -e "${Error} ${RedBG} 用户名不能包含空格 ${Font}"
-        return 1
-    fi
+    check_user_name "${user_name}" || return 1
     if grep -q "^${user_name} " "${vmess_users_file}"; then
         echo -e "${Error} ${RedBG} 用户 ${user_name} 已存在 ${Font}"
         return 1
     fi
+    confirm_cross_protocol_name "${user_name}" "${anytls_users_file}" "AnyTLS" || return 1
     echo "${user_name} $(cat /proc/sys/kernel/random/uuid)" >>"${vmess_users_file}"
     v2ray_conf_add
     systemctl restart sing-box
@@ -2185,14 +2208,12 @@ vmess_user_rename() {
     fi
     read -rp "请输入新的用户名:" new_name
     [[ -z "${new_name}" ]] && return 1
-    if [[ "${new_name}" =~ [[:space:]] ]]; then
-        echo -e "${Error} ${RedBG} 用户名不能包含空格 ${Font}"
-        return 1
-    fi
+    check_user_name "${new_name}" || return 1
     if grep -q "^${new_name} " "${vmess_users_file}"; then
         echo -e "${Error} ${RedBG} 用户 ${new_name} 已存在 ${Font}"
         return 1
     fi
+    confirm_cross_protocol_name "${new_name}" "${anytls_users_file}" "AnyTLS" || return 1
     local old_uuid
     old_uuid="$(grep "^${old_name} " "${vmess_users_file}" | head -1 | awk '{print $2}')"
     sed -i "/^${old_name} /d" "${vmess_users_file}"

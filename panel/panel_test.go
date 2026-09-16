@@ -273,6 +273,15 @@ func TestConnectionGraph(t *testing.T) {
 	}
 }
 
+func TestStatUserName(t *testing.T) {
+	if got := statUserName("vmess", "admin"); got != "v:admin" {
+		t.Errorf("vmess stat name = %q, want v:admin", got)
+	}
+	if got := statUserName("anytls", "admin"); got != "a:admin" {
+		t.Errorf("anytls stat name = %q, want a:admin", got)
+	}
+}
+
 func TestBuildTopology(t *testing.T) {
 	userRows := []userTrafficRow{
 		{Protocol: "vmess", Username: "alice", Uplink: 100, Downlink: 200},

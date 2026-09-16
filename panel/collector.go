@@ -19,12 +19,26 @@ type protoSource struct {
 }
 
 type collector struct {
-	store       *store
-	sources     []*protoSource
-	counters    map[string]int64
-	mu          sync.Mutex
-	online      int  // seconds window for "online"
-	dedupeUsers bool // true when all sources share the same stats API
+	store    *store
+	sources  []*protoSource
+	counters map[string]int64
+	mu       sync.Mutex
+	online   int // seconds window for "online"
+}
+
+// statUserName returns the sing-box stats counter user name for a protocol. The
+// installer namespaces user names with "v:"/"a:" so the per-user counters are
+// independent per protocol; otherwise a same-named user across protocols shares
+// one counter and the per-protocol split is lost.
+func statUserName(protocol, user string) string {
+	switch protocol {
+	case "vmess":
+		return "v:" + user
+	case "anytls":
+		return "a:" + user
+	default:
+		return user
+	}
 }
 
 func newCollector(st *store, cfg *Config, onlineWindow int) (*collector, error) {
@@ -57,9 +71,6 @@ func newCollector(st *store, cfg *Config, onlineWindow int) (*collector, error) 
 	if len(c.sources) > 0 {
 		c.sources[0].readOutbound = true
 	}
-	// 同一个 stats API 下，用户统计按用户名计数：同名用户会被多个源重复读取，
-	// 需要跨源去重，否则该用户流量翻倍。
-	c.dedupeUsers = cfg.V2Ray.APIAddr != "" && cfg.V2Ray.APIAddr == cfg.SingBox.APIAddr
 
 	m, err := st.loadCounters()
 	if err != nil {
@@ -90,26 +101,9 @@ func (c *collector) run(ctx context.Context, interval time.Duration) {
 }
 
 func (c *collector) poll(ctx context.Context) {
-	var seen map[string]bool
-	if c.dedupeUsers {
-		seen = make(map[string]bool)
-	}
 	for _, ps := range c.sources {
 		ps.users = readUsers(ps.usersFile, ps.users)
-		users := ps.users
-		if seen != nil {
-			// 同一个 stats API 下用户按名字计数：同名用户只统计一次，
-			// 避免被多个源重复累加导致流量翻倍。
-			users = make([]string, 0, len(ps.users))
-			for _, u := range ps.users {
-				if seen[u] {
-					continue
-				}
-				seen[u] = true
-				users = append(users, u)
-			}
-		}
-		if len(users) == 0 && !ps.readOutbound {
+		if len(ps.users) == 0 && !ps.readOutbound {
 			continue
 		}
 		pctx, cancel := context.WithTimeout(ctx, 8*time.Second)
@@ -120,9 +114,10 @@ func (c *collector) poll(ctx context.Context) {
 			continue
 		}
 		now := time.Now()
-		for _, user := range users {
-			up := counters["user>>>"+user+">>>traffic>>>uplink"]
-			down := counters["user>>>"+user+">>>traffic>>>downlink"]
+		for _, user := range ps.users {
+			statUser := statUserName(ps.protocol, user)
+			up := counters["user>>>"+statUser+">>>traffic>>>uplink"]
+			down := counters["user>>>"+statUser+">>>traffic>>>downlink"]
 			c.mu.Lock()
 			lastUp := c.counters[ps.protocol+"|"+user+"|up"]
 			lastDown := c.counters[ps.protocol+"|"+user+"|down"]
