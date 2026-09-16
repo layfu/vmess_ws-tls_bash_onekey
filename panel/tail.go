@@ -233,7 +233,8 @@ func startLogTailers(st *store, cfg *Config) {
 			}
 		})
 	}
-	if cfg.SingBox.Enabled && cfg.SingBox.LogFile != "" {
+	// VMess 与 AnyTLS 的入站日志都写在 sing-box 日志里，因此只要配置了日志路径就启动。
+	if cfg.SingBox.LogFile != "" {
 		sb := newSingboxMatcher(st, corr)
 		go followFile(cfg.SingBox.LogFile, sb.handle)
 	}

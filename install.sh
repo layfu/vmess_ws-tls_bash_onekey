@@ -22,7 +22,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.9.27"
+shell_version="1.6.9.28"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -793,7 +793,8 @@ panel_config_gen() {
     mkdir -p "${panel_conf_dir}" "${panel_db_dir}"
     local v2ray_enabled="false" singbox_enabled="false"
     [[ -s "${vmess_users_file}" ]] && v2ray_enabled="true"
-    [[ -s "${anytls_users_file}" ]] && singbox_enabled="true"
+    # VMess 与 AnyTLS 都由 sing-box 承载，装了 sing-box 即视为启用
+    [[ -f "${singbox_conf}" ]] && singbox_enabled="true"
     cat >"${panel_conf}" <<EOF
 {
   "listen": "${panel_listen_addr}",

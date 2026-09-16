@@ -11,6 +11,7 @@
   const NODE_H = 38;
   const NODE_PITCH = 46;
   const LAYERS = 5;
+  const MIN_STAGE_H = 200;
   const PARTICLE_COUNT = 2;
   const FLOW_DURATION = 3;
   const ANIM_MIN_BYTES = 1024;
@@ -118,7 +119,11 @@
       maxH = Math.max(maxH, arr.length * NODE_PITCH);
     }
     const stageW = PAD_X * 2 + LAYERS * COL_W;
-    const stageH = PAD_Y * 2 + Math.max(maxH, NODE_PITCH);
+    // 画布高度与 CSS min-height 对齐，并把整图垂直居中，避免 SVG viewBox 与
+    // 实际高度不一致时 preserveAspectRatio 造成连线相对节点偏移。
+    const contentH = PAD_Y * 2 + Math.max(maxH, NODE_PITCH);
+    const stageH = Math.max(contentH, MIN_STAGE_H);
+    const yOffset = (stageH - contentH) / 2;
     stage.style.width = stageW + 'px';
     stage.style.height = stageH + 'px';
     svg.setAttribute('viewBox', '0 0 ' + stageW + ' ' + stageH);
@@ -127,7 +132,7 @@
     for (let li = 0; li < LAYERS; li++) {
       const arr = byLayer[li];
       const layerH = arr.length * NODE_PITCH;
-      const yStart = PAD_Y + (maxH - layerH) / 2;
+      const yStart = yOffset + PAD_Y + (maxH - layerH) / 2;
       const cx = PAD_X + li * COL_W + COL_W / 2;
       arr.forEach((n, i) => {
         nodeCenter.set(n.id, { x: cx, y: yStart + i * NODE_PITCH + NODE_H / 2 });

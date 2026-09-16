@@ -1,4 +1,6 @@
 ## 2026-09-16
+* 修复路由拓扑连线与节点错位：`.topo-stage` 的 `min-height:200px` 会把画布撑高，而 SVG `viewBox` 高度较小，`preserveAspectRatio` 将内容垂直居中导致连线整体偏移；现布局按最小画布高度并把整图垂直居中，使 stage 高度与 viewBox 一致（面板 2.0.1）
+* 修复只装 VMess 时「最近连接」为空：sing-box 日志 tailer 之前要求 `singbox.enabled`，而该标记仅按 AnyTLS 用户判定；现改为只要配置了日志路径就启动（VMess/AnyTLS 共用同一份日志），`panel_config_gen` 也改为按 sing-box 配置存在与否判定启用（面板 2.0.1 / 脚本 1.6.9.28）
 * 修复卸载 sing-box 后仍提示「已安装 VMess」无法重装：VMess 的「已安装」判定改为同时要求 sing-box 配置里存在 `vmess-in`；「卸载 sing-box」同时清理 VMess 用户/QR 残留（脚本 1.6.9.27）
 * 卸载菜单新增「卸载 VMess」：删除 VMess 用户/QR/内部端口，若还装有 AnyTLS 则重生成 sing-box 配置并重启；「卸载 sing-box」文案改为 VMess/AnyTLS（脚本 1.6.9.26）
 * 修复 VMess 迁移后连接失败：install.sh 中存在两个 `v2ray_conf_add` 定义，后定义的老 v2ray 版本覆盖了新别名，导致配置写到 v2ray 而非 sing-box、`/etc/sing-box/config.json` 未生成、Nginx 反代到无进程的端口。已删除重复定义（脚本 1.6.9.25）
