@@ -92,6 +92,11 @@
     return byteFmt.format(n) + ' ' + units[i];
   }
 
+  // 数值按单位格式化：字节或次数。
+  function fmtValue(v, unit) {
+    return unit === 'count' ? v + ' 次' : fmtBytes(v);
+  }
+
   function keyOf(link) {
     return link.source + '\u0000' + link.target + '\u0000' + (link.status || '');
   }
@@ -101,13 +106,25 @@
       links.map(keyOf).sort().join('|');
   }
 
-  function edgeWidth(bytes, maxBytes) {
-    return 1 + Math.min(1, bytes / Math.max(maxBytes, 1)) * 5;
+  function unitMax(links, unit) {
+    let m = 1;
+    for (const l of links) {
+      if ((l.unit || 'bytes') === unit && l.value > m) m = l.value;
+    }
+    return m;
   }
 
-  // 相对门槛：只看这条边占最大边流量的比例，突出主干线路。
-  function shouldAnimate(bytes, maxBytes) {
-    return bytes >= Math.max(ANIM_MIN_BYTES, maxBytes * ANIM_RATIO);
+  function edgeWidth(link, maxBytes, maxCount) {
+    const max = link.unit === 'count' ? maxCount : maxBytes;
+    return 1 + Math.min(1, link.value / Math.max(max, 1)) * 5;
+  }
+
+  // 相对门槛：只看这条边占同类最大值的比例，突出主干线路。
+  function shouldAnimate(link, maxBytes, maxCount) {
+    const isCount = link.unit === 'count';
+    const max = isCount ? maxCount : maxBytes;
+    const min = isCount ? 2 : ANIM_MIN_BYTES;
+    return link.value >= Math.max(min, max * ANIM_RATIO);
   }
 
   function layout() {
@@ -115,7 +132,7 @@
     for (const n of data.nodes) byLayer[layerOf(n.kind)].push(n);
     let maxH = 0;
     for (const arr of byLayer) {
-      arr.sort((a, b) => (b.bytes - a.bytes) || a.id.localeCompare(b.id));
+      arr.sort((a, b) => (b.value - a.value) || a.id.localeCompare(b.id));
       maxH = Math.max(maxH, arr.length * NODE_PITCH);
     }
     const stageW = PAD_X * 2 + LAYERS * COL_W;
@@ -167,7 +184,7 @@
       const c = nodeCenter.get(n.id);
       if (!c) continue;
       const el = document.createElement('div');
-      el.className = 'topo-node kind-' + n.kind;
+      el.className = 'topo-node kind-' + n.kind + (n.unit === 'count' ? ' unit-count' : '');
       el.dataset.id = n.id;
       el.style.left = (c.x - NODE_W / 2) + 'px';
       el.style.top = (c.y - NODE_H / 2) + 'px';
@@ -183,7 +200,7 @@
       label.textContent = n.label;
       const count = document.createElement('span');
       count.className = 'topo-node-count';
-      count.textContent = fmtBytes(n.bytes);
+      count.textContent = fmtValue(n.value, n.unit);
       el.appendChild(dot);
       el.appendChild(label);
       el.appendChild(count);
@@ -231,7 +248,8 @@
   }
 
   function buildEdges() {
-    const maxCount = data.links.reduce((m, l) => Math.max(m, l.bytes), 1);
+    const maxBytes = unitMax(data.links, 'bytes');
+    const maxCount = unitMax(data.links, 'count');
     for (let i = 0; i < data.links.length; i++) {
       const l = data.links[i];
       const s = nodeCenter.get(l.source);
@@ -245,10 +263,10 @@
       const mx = (sx + tx) / 2;
       const d = 'M' + sx + ' ' + s.y + ' C' + mx + ' ' + s.y + ', ' + mx + ' ' + t.y + ', ' + tx + ' ' + t.y;
       const color = edgeColor(l.status);
-      const width = edgeWidth(l.bytes, maxCount);
+      const width = edgeWidth(l, maxBytes, maxCount);
 
       const g = document.createElementNS(SVG_NS, 'g');
-      g.setAttribute('class', 'topo-edge');
+      g.setAttribute('class', 'topo-edge' + (l.unit === 'count' ? ' unit-count' : ''));
       const track = document.createElementNS(SVG_NS, 'path');
       track.setAttribute('class', 'topo-edge-track');
       track.setAttribute('d', d);
@@ -262,7 +280,7 @@
       g.appendChild(line);
 
       const entry = { g, track, d, color, dots: null };
-      if (!reducedMotion && shouldAnimate(l.bytes, maxCount)) {
+      if (!reducedMotion && shouldAnimate(l, maxBytes, maxCount)) {
         entry.dots = addParticles(g, d, color);
       }
       svg.appendChild(g);
@@ -276,17 +294,18 @@
       const el = nodeEls.get(n.id);
       if (!el) continue;
       const c = el.querySelector('.topo-node-count');
-      if (c) c.textContent = fmtBytes(n.bytes);
+      if (c) c.textContent = fmtValue(n.value, n.unit);
     }
-    const maxCount = data.links.reduce((m, l) => Math.max(m, l.bytes), 1);
+    const maxBytes = unitMax(data.links, 'bytes');
+    const maxCount = unitMax(data.links, 'count');
     for (let i = 0; i < data.links.length; i++) {
       const l = data.links[i];
       const entry = edgeList[i];
       if (!entry) continue;
-      entry.track.setAttribute('stroke-width', String(edgeWidth(l.bytes, maxCount) + 6));
-      // 数据刷新时同步粒子的增删，保证动画状态与当前 count/门槛一致。
+      entry.track.setAttribute('stroke-width', String(edgeWidth(l, maxBytes, maxCount) + 6));
+      // 数据刷新时同步粒子的增删，保证动画状态与当前数值/门槛一致。
       if (!reducedMotion) {
-        const want = shouldAnimate(l.bytes, maxCount);
+        const want = shouldAnimate(l, maxBytes, maxCount);
         if (want && !entry.dots) {
           entry.dots = addParticles(entry.g, entry.d, entry.color);
         } else if (!want && entry.dots) {
@@ -334,7 +353,7 @@
 
   function renderSummary() {
     const totals = data.totals || {};
-    const parts = Object.keys(totals).map((k) => statusLabel(k) + ' ' + fmtBytes(totals[k]));
+    const parts = Object.keys(totals).map((k) => statusLabel(k) + ' ' + fmtValue(totals[k], k === 'blocked' ? 'count' : 'bytes'));
     summaryEl.textContent = parts.length ? '路由拓扑（近 24 小时）：' + parts.join('，') : '暂无连接数据';
   }
 

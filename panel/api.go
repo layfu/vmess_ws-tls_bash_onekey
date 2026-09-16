@@ -146,14 +146,16 @@ type topoNode struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
 	Kind  string `json:"kind"`
-	Bytes int64  `json:"bytes"`
+	Value int64  `json:"value"`
+	Unit  string `json:"unit"`
 }
 
 type topoLink struct {
 	Source string `json:"source"`
 	Target string `json:"target"`
 	Status string `json:"status"`
-	Bytes  int64  `json:"bytes"`
+	Value  int64  `json:"value"`
+	Unit   string `json:"unit"`
 }
 
 const topoTopN = 10
@@ -178,12 +180,17 @@ func (a *api) topology(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	outboundBytes, err := a.store.outboundTraffic(since)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	connRows, err := a.store.connectionGraph(since)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	nodes, links, totals, userPaths := buildTopology(userRows, targetRows, connRows)
+	nodes, links, totals, userPaths := buildTopology(userRows, targetRows, outboundBytes, connRows)
 	if nodes == nil {
 		nodes = []topoNode{}
 	}
@@ -206,18 +213,17 @@ func (a *api) topology(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// buildTopology turns per-user and per-target traffic into a layered routing
-// graph. Users and targets beyond the top N are merged into an "其他" node.
-// userPaths maps a user node to the link indices of every route that user took.
-func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, connRows []connGraphRow) ([]topoNode, []topoLink, map[string]int64, map[string][]int) {
+// buildTopology turns per-user, per-outbound and per-target traffic into a
+// layered routing graph: user -> protocol -> server -> outbound -> target.
+// Direct/WARP are measured in bytes: the accurate outbound total comes from the
+// v2ray_api outbound stats, and the Clash per-target sample is scaled to match.
+// Blocked is measured in attempts (count). Users/targets beyond the top N are
+// merged into an "其他" node. userPaths maps a user node to its route links.
+func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, outboundBytes map[string]int64, connRows []connGraphRow) ([]topoNode, []topoLink, map[string]int64, map[string][]int) {
 	userBytes := map[string]int64{}
 	protoBytes := map[string]int64{}
 	userProto := map[[2]string]int64{}
-	targetBytes := map[string]int64{}
-	statusBytes := map[string]int64{}
-	outTarget := map[[2]string]int64{}
-	var total, statusTotal int64
-
+	var total int64
 	for _, r := range userRows {
 		if r.Username == "" {
 			continue
@@ -231,6 +237,10 @@ func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, con
 		userProto[[2]string{r.Username, r.Protocol}] += b
 		total += b
 	}
+
+	// Clash per-status and per (status,host) sample bytes.
+	clashStatus := map[string]int64{}
+	clashOutTarget := map[[2]string]int64{}
 	for _, r := range targetRows {
 		b := r.Uplink + r.Downlink
 		if b == 0 || r.Host == "" {
@@ -240,12 +250,68 @@ func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, con
 		if status == "" {
 			status = "unknown"
 		}
-		targetBytes[r.Host] += b
-		statusBytes[status] += b
-		outTarget[[2]string{status, r.Host}] += b
+		clashStatus[status] += b
+		clashOutTarget[[2]string{status, r.Host}] += b
+	}
+
+	// Accurate outbound bytes (v2ray_api outbound stats); "block" -> "blocked".
+	outBytes := map[string]int64{}
+	for tag, b := range outboundBytes {
+		status := tag
+		if tag == "block" {
+			status = "blocked"
+		}
+		outBytes[status] += b
+	}
+	if len(outBytes) == 0 { // fall back to the Clash sample
+		for s, b := range clashStatus {
+			outBytes[s] = b
+		}
+	}
+
+	// Direct/WARP: scale the Clash target distribution to the accurate outbound total.
+	targetBytes := map[string]int64{}
+	outTarget := map[[2]string]int64{}
+	for pair, b := range clashOutTarget {
+		status, host := pair[0], pair[1]
+		if status == "blocked" {
+			continue
+		}
+		denom := clashStatus[status]
+		if denom <= 0 || outBytes[status] <= 0 {
+			continue
+		}
+		scaled := b * outBytes[status] / denom
+		if scaled <= 0 {
+			continue
+		}
+		targetBytes[host] += scaled
+		outTarget[pair] += scaled
+	}
+
+	// Blocked: attempts per target from the connection log.
+	blockedCounts := map[string]int64{}
+	var blockedTotal int64
+	for _, r := range connRows {
+		if r.Status != "blocked" {
+			continue
+		}
+		host := normalizeTarget(r.Target)
+		if host == "" {
+			continue
+		}
+		blockedCounts[host] += r.Count
+		blockedTotal += r.Count
+	}
+
+	var statusTotal int64
+	for s, b := range outBytes {
+		if s == "blocked" {
+			continue
+		}
 		statusTotal += b
 	}
-	if total == 0 && statusTotal == 0 {
+	if total == 0 && statusTotal == 0 && blockedTotal == 0 {
 		return nil, nil, nil, nil
 	}
 	serverBytes := total
@@ -255,6 +321,7 @@ func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, con
 
 	keepUsers := topKeys(userBytes, topoTopN)
 	keepTargets := topKeys(targetBytes, topoTopN)
+	keepBlocked := topKeys(blockedCounts, topoTopN)
 	userKey := func(name string) string {
 		if keepUsers[name] {
 			return "user:" + name
@@ -267,6 +334,14 @@ func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, con
 		}
 		return "target:__other__"
 	}
+	blockedKey := func(name string) string {
+		if keepBlocked[name] {
+			return "btarget:" + name
+		}
+		return "btarget:__other__"
+	}
+
+	nodes := make([]topoNode, 0)
 
 	userNodeBytes := map[string]int64{}
 	userLabel := map[string]string{}
@@ -281,6 +356,23 @@ func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, con
 			}
 		}
 	}
+	for id, b := range userNodeBytes {
+		nodes = append(nodes, topoNode{ID: id, Label: userLabel[id], Kind: "user", Value: b, Unit: "bytes"})
+	}
+	for p, b := range protoBytes {
+		nodes = append(nodes, topoNode{ID: "proto:" + p, Label: protoLabel(p), Kind: "protocol", Value: b, Unit: "bytes"})
+	}
+	nodes = append(nodes, topoNode{ID: "srv", Label: "服务器", Kind: "server", Value: serverBytes, Unit: "bytes"})
+	for s, b := range outBytes {
+		if s == "blocked" {
+			continue
+		}
+		nodes = append(nodes, topoNode{ID: "out:" + s, Label: statusLabel(s), Kind: s, Value: b, Unit: "bytes"})
+	}
+	if blockedTotal > 0 {
+		nodes = append(nodes, topoNode{ID: "out:blocked", Label: statusLabel("blocked"), Kind: "blocked", Value: blockedTotal, Unit: "count"})
+	}
+
 	targetNodeBytes := map[string]int64{}
 	targetLabel := map[string]string{}
 	for name, b := range targetBytes {
@@ -294,38 +386,53 @@ func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, con
 			}
 		}
 	}
-
-	nodes := make([]topoNode, 0, len(userNodeBytes)+len(protoBytes)+1+len(statusBytes)+len(targetNodeBytes))
-	for id, b := range userNodeBytes {
-		nodes = append(nodes, topoNode{ID: id, Label: userLabel[id], Kind: "user", Bytes: b})
-	}
-	for p, b := range protoBytes {
-		nodes = append(nodes, topoNode{ID: "proto:" + p, Label: protoLabel(p), Kind: "protocol", Bytes: b})
-	}
-	nodes = append(nodes, topoNode{ID: "srv", Label: "服务器", Kind: "server", Bytes: serverBytes})
-	for s, b := range statusBytes {
-		nodes = append(nodes, topoNode{ID: "out:" + s, Label: statusLabel(s), Kind: s, Bytes: b})
-	}
 	for id, b := range targetNodeBytes {
-		nodes = append(nodes, topoNode{ID: id, Label: targetLabel[id], Kind: "target", Bytes: b})
+		nodes = append(nodes, topoNode{ID: id, Label: targetLabel[id], Kind: "target", Value: b, Unit: "bytes"})
+	}
+	blockedNodeCounts := map[string]int64{}
+	blockedLabel := map[string]string{}
+	for name, c := range blockedCounts {
+		id := blockedKey(name)
+		blockedNodeCounts[id] += c
+		if _, ok := blockedLabel[id]; !ok {
+			if id == "btarget:__other__" {
+				blockedLabel[id] = "其他"
+			} else {
+				blockedLabel[id] = name
+			}
+		}
+	}
+	for id, c := range blockedNodeCounts {
+		nodes = append(nodes, topoNode{ID: id, Label: blockedLabel[id], Kind: "target", Value: c, Unit: "count"})
 	}
 
-	linkBytes := map[[3]string]int64{}
+	links := make([]topoLink, 0)
+	addLink := func(src, dst, status string, v int64, unit string) {
+		if v <= 0 {
+			return
+		}
+		links = append(links, topoLink{Source: src, Target: dst, Status: status, Value: v, Unit: unit})
+	}
 	for pair, b := range userProto {
-		linkBytes[[3]string{userKey(pair[0]), "proto:" + pair[1], ""}] += b
+		addLink(userKey(pair[0]), "proto:"+pair[1], "", b, "bytes")
 	}
 	for p, b := range protoBytes {
-		linkBytes[[3]string{"proto:" + p, "srv", ""}] += b
+		addLink("proto:"+p, "srv", "", b, "bytes")
 	}
-	for s, b := range statusBytes {
-		linkBytes[[3]string{"srv", "out:" + s, s}] += b
+	for s, b := range outBytes {
+		if s == "blocked" {
+			continue
+		}
+		addLink("srv", "out:"+s, s, b, "bytes")
+	}
+	if blockedTotal > 0 {
+		addLink("srv", "out:blocked", "blocked", blockedTotal, "count")
 	}
 	for pair, b := range outTarget {
-		linkBytes[[3]string{"out:" + pair[0], targetKey(pair[1]), pair[0]}] += b
+		addLink("out:"+pair[0], targetKey(pair[1]), pair[0], b, "bytes")
 	}
-	links := make([]topoLink, 0, len(linkBytes))
-	for k, b := range linkBytes {
-		links = append(links, topoLink{Source: k[0], Target: k[1], Status: k[2], Bytes: b})
+	for name, c := range blockedCounts {
+		addLink("out:blocked", blockedKey(name), "blocked", c, "count")
 	}
 
 	sort.Slice(nodes, func(i, j int) bool {
@@ -333,8 +440,8 @@ func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, con
 		if li != lj {
 			return li < lj
 		}
-		if nodes[i].Bytes != nodes[j].Bytes {
-			return nodes[i].Bytes > nodes[j].Bytes
+		if nodes[i].Value != nodes[j].Value {
+			return nodes[i].Value > nodes[j].Value
 		}
 		return nodes[i].ID < nodes[j].ID
 	})
@@ -348,8 +455,7 @@ func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, con
 		return links[i].Status < links[j].Status
 	})
 
-	// Map every (source,target) pair to its link index, then walk the connection
-	// log to record which links belong to each user's path (for hover highlight).
+	// Map (source,target) to link index for the per-user hover paths.
 	linkIndex := make(map[[2]string]int, len(links))
 	for i, l := range links {
 		linkIndex[[2]string{l.Source, l.Target}] = i
@@ -366,7 +472,12 @@ func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, con
 		uk := userKey(r.Username)
 		pk := "proto:" + r.Protocol
 		outk := "out:" + status
-		tk := targetKey(normalizeTarget(r.Target))
+		var tk string
+		if status == "blocked" {
+			tk = blockedKey(normalizeTarget(r.Target))
+		} else {
+			tk = targetKey(normalizeTarget(r.Target))
+		}
 		set := pathSets[uk]
 		if set == nil {
 			set = map[int]bool{}
@@ -388,7 +499,18 @@ func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, con
 		userPaths[uk] = idxs
 	}
 
-	return nodes, links, statusBytes, userPaths
+	totals := map[string]int64{}
+	for s, b := range outBytes {
+		if s == "blocked" {
+			continue
+		}
+		totals[s] = b
+	}
+	if blockedTotal > 0 {
+		totals["blocked"] = blockedTotal
+	}
+
+	return nodes, links, totals, userPaths
 }
 
 // topoLayer maps a node kind to its column: user=0, protocol=1, server=2,

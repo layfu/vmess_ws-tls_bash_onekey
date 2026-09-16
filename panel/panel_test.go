@@ -282,30 +282,38 @@ func TestBuildTopology(t *testing.T) {
 		{Protocol: "vmess", Host: "example.com", Status: "direct", Uplink: 100, Downlink: 200},
 		{Protocol: "anytls", Host: "ads.com", Status: "blocked", Uplink: 50, Downlink: 50},
 	}
+	outboundBytes := map[string]int64{"direct": 300, "block": 100, "warp": 0}
 	connRows := []connGraphRow{
 		{Username: "alice", Protocol: "vmess", Status: "direct", Target: "example.com:443", Count: 5},
 		{Username: "bob", Protocol: "anytls", Status: "blocked", Target: "ads.com:443", Count: 3},
 	}
-	nodes, links, totals, userPaths := buildTopology(userRows, targetRows, connRows)
+	nodes, links, totals, userPaths := buildTopology(userRows, targetRows, outboundBytes, connRows)
 
-	if totals["direct"] != 300 || totals["blocked"] != 100 {
+	// direct is bytes (outbound stats), blocked is attempts (count).
+	if totals["direct"] != 300 || totals["blocked"] != 3 {
 		t.Errorf("totals = %+v", totals)
 	}
 	byID := map[string]topoNode{}
 	for _, n := range nodes {
 		byID[n.ID] = n
 	}
-	if n := byID["srv"]; n.Kind != "server" || n.Bytes != 400 {
+	if n := byID["srv"]; n.Kind != "server" || n.Value != 400 || n.Unit != "bytes" {
 		t.Errorf("server node = %+v", n)
 	}
-	if n := byID["user:alice"]; n.Bytes != 300 {
+	if n := byID["user:alice"]; n.Value != 300 {
 		t.Errorf("alice node = %+v", n)
 	}
-	if n := byID["out:direct"]; n.Label != "直连" || n.Bytes != 300 {
+	if n := byID["out:direct"]; n.Label != "直连" || n.Value != 300 || n.Unit != "bytes" {
 		t.Errorf("direct node = %+v", n)
 	}
-	if n := byID["target:example.com"]; n.Bytes != 300 {
+	if n := byID["out:blocked"]; n.Value != 3 || n.Unit != "count" {
+		t.Errorf("blocked node = %+v", n)
+	}
+	if n := byID["target:example.com"]; n.Value != 300 || n.Unit != "bytes" {
 		t.Errorf("example.com node = %+v", n)
+	}
+	if n := byID["btarget:ads.com"]; n.Value != 3 || n.Unit != "count" {
+		t.Errorf("ads.com blocked node = %+v", n)
 	}
 	if _, ok := byID["user:未知用户"]; ok {
 		t.Errorf("unknown user should not appear: %+v", nodes)
@@ -313,9 +321,9 @@ func TestBuildTopology(t *testing.T) {
 
 	linkByKey := map[string]int64{}
 	for _, l := range links {
-		linkByKey[l.Source+"->"+l.Target] = l.Bytes
+		linkByKey[l.Source+"->"+l.Target] = l.Value
 	}
-	if linkByKey["srv->out:direct"] != 300 || linkByKey["out:blocked->target:ads.com"] != 100 {
+	if linkByKey["srv->out:direct"] != 300 || linkByKey["out:blocked->btarget:ads.com"] != 3 {
 		t.Errorf("links = %+v", links)
 	}
 
@@ -344,6 +352,36 @@ func TestBuildTopology(t *testing.T) {
 	if bob["srv->out:direct"] || bob["out:direct->target:example.com"] {
 		t.Errorf("bob path unexpectedly includes direct route: %+v", bob)
 	}
+	if !bob["srv->out:blocked"] || !bob["out:blocked->btarget:ads.com"] {
+		t.Errorf("bob blocked path missing: %+v", bob)
+	}
+}
+
+func TestBuildTopologyScalesTargetsToOutbound(t *testing.T) {
+	// Clash sample only saw 100 of the real 400 bytes on the warp outbound;
+	// the target distribution must be scaled up to 400.
+	userRows := []userTrafficRow{
+		{Protocol: "vmess", Username: "alice", Uplink: 400, Downlink: 0},
+	}
+	targetRows := []targetTrafficRow{
+		{Protocol: "vmess", Host: "a.com", Status: "warp", Uplink: 60, Downlink: 0},
+		{Protocol: "vmess", Host: "b.com", Status: "warp", Uplink: 40, Downlink: 0},
+	}
+	outboundBytes := map[string]int64{"warp": 400}
+	nodes, _, _, _ := buildTopology(userRows, targetRows, outboundBytes, nil)
+	byID := map[string]topoNode{}
+	for _, n := range nodes {
+		byID[n.ID] = n
+	}
+	if n := byID["out:warp"]; n.Value != 400 {
+		t.Errorf("warp node = %+v", n)
+	}
+	if n := byID["target:a.com"]; n.Value != 240 {
+		t.Errorf("a.com = %+v (want 240)", n)
+	}
+	if n := byID["target:b.com"]; n.Value != 160 {
+		t.Errorf("b.com = %+v (want 160)", n)
+	}
 }
 
 func TestBuildTopologySkipsUnknownUser(t *testing.T) {
@@ -353,9 +391,9 @@ func TestBuildTopologySkipsUnknownUser(t *testing.T) {
 	}
 	targetRows := []targetTrafficRow{
 		{Protocol: "vmess", Host: "example.com", Status: "direct", Uplink: 5, Downlink: 5},
-		{Protocol: "vmess", Host: "127.0.0.1", Status: "api", Uplink: 3, Downlink: 0},
 	}
-	nodes, _, totals, userPaths := buildTopology(userRows, targetRows, nil)
+	outboundBytes := map[string]int64{"direct": 10}
+	nodes, _, totals, userPaths := buildTopology(userRows, targetRows, outboundBytes, nil)
 	if totals["direct"] != 10 {
 		t.Errorf("totals = %+v", totals)
 	}
@@ -393,7 +431,8 @@ func TestBuildTopologyOtherBuckets(t *testing.T) {
 			Count:    1,
 		})
 	}
-	nodes, links, _, userPaths := buildTopology(userRows, targetRows, connRows)
+	outboundBytes := map[string]int64{"direct": 1200}
+	nodes, links, _, userPaths := buildTopology(userRows, targetRows, outboundBytes, connRows)
 	byID := map[string]topoNode{}
 	for _, n := range nodes {
 		byID[n.ID] = n

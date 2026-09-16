@@ -885,6 +885,8 @@ footer {
   opacity: 0.55;
 }
 .topo-edge-dot { pointer-events: none; }
+/* 按次数统计的出口（封禁）用虚线区分 */
+.topo-edge.unit-count .topo-edge-line { stroke-dasharray: 3 3; }
 .topo-nodes { position: absolute; inset: 0; }
 .topo-node {
   position: absolute;
@@ -902,6 +904,10 @@ footer {
     transform 160ms var(--ease-out);
 }
 .topo-node.dim { opacity: 0.12; }
+.topo-node.unit-count {
+  border-style: dashed;
+  border-color: rgba(255, 90, 90, 0.4);
+}
 .topo-dot {
   width: 7px;
   height: 7px;

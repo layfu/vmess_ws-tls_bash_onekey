@@ -1,4 +1,5 @@
 ## 2026-09-16
+* 路由拓扑出口层改用 v2ray_api 的 outbound 统计（与用户统计同源、完整 24h）：直连/WARP 的流量与服务器总量守恒；目标层按该出口的准确总量对 Clash 抽样做**等比缩放**（保留目标相对占比）；封禁改为按**拦截次数**显示并用虚线区分（新增 `outbound_hourly` 表与 outbound 采集，两个 stats 源只读一次避免重复计数）（面板 2.0.3）
 * 修复路由拓扑不显示「出口/目标」：Clash API 轮询器与 sing-box 采集源之前要求 `singbox.enabled`，旧配置未重生成时为 false 导致不启动；现改为只要配置了地址就运行，不依赖该标记；轮询间隔 2s → 1s（面板 2.0.2）
 * 修复路由拓扑连线与节点错位：`.topo-stage` 的 `min-height:200px` 会把画布撑高，而 SVG `viewBox` 高度较小，`preserveAspectRatio` 将内容垂直居中导致连线整体偏移；现布局按最小画布高度并把整图垂直居中，使 stage 高度与 viewBox 一致（面板 2.0.1）
 * 修复只装 VMess 时「最近连接」为空：sing-box 日志 tailer 之前要求 `singbox.enabled`，而该标记仅按 AnyTLS 用户判定；现改为只要配置了日志路径就启动（VMess/AnyTLS 共用同一份日志），`panel_config_gen` 也改为按 sing-box 配置存在与否判定启用（面板 2.0.1 / 脚本 1.6.9.28）

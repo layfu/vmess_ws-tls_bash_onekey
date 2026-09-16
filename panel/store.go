@@ -52,9 +52,17 @@ CREATE TABLE IF NOT EXISTS target_traffic (
   downlink INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (protocol, host, status, hour)
 );
+CREATE TABLE IF NOT EXISTS outbound_hourly (
+  tag TEXT NOT NULL,
+  hour INTEGER NOT NULL,
+  uplink INTEGER NOT NULL DEFAULT 0,
+  downlink INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (tag, hour)
+);
 CREATE INDEX IF NOT EXISTS idx_connections_ts ON connections(ts);
 CREATE INDEX IF NOT EXISTS idx_hourly_hour ON hourly(hour);
 CREATE INDEX IF NOT EXISTS idx_target_traffic_hour ON target_traffic(hour);
+CREATE INDEX IF NOT EXISTS idx_outbound_hourly_hour ON outbound_hourly(hour);
 `
 
 type store struct {
@@ -481,6 +489,48 @@ func (s *store) pruneTargetTraffic(maxAge time.Duration) {
 	if maxAge > 0 {
 		cutoff := time.Now().Add(-maxAge).Unix()
 		_, _ = s.db.Exec(`DELETE FROM target_traffic WHERE hour < ?`, cutoff)
+	}
+}
+
+// addOutboundTraffic accumulates per-outbound bytes (from the v2ray_api outbound
+// stats) into the current hour bucket.
+func (s *store) addOutboundTraffic(tag string, hour, uplink, downlink int64) error {
+	_, err := s.db.Exec(
+		`INSERT INTO outbound_hourly (tag, hour, uplink, downlink) VALUES (?, ?, ?, ?)
+		 ON CONFLICT(tag, hour) DO UPDATE SET
+		   uplink = uplink + excluded.uplink,
+		   downlink = downlink + excluded.downlink`,
+		tag, hour, uplink, downlink,
+	)
+	return err
+}
+
+// outboundTraffic returns per-tag total bytes over the window.
+func (s *store) outboundTraffic(since int64) (map[string]int64, error) {
+	rows, err := s.db.Query(
+		`SELECT tag, SUM(uplink + downlink) FROM outbound_hourly WHERE hour >= ? GROUP BY tag`,
+		since,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	m := make(map[string]int64)
+	for rows.Next() {
+		var tag string
+		var v int64
+		if err := rows.Scan(&tag, &v); err != nil {
+			return nil, err
+		}
+		m[tag] = v
+	}
+	return m, rows.Err()
+}
+
+func (s *store) pruneOutboundTraffic(maxAge time.Duration) {
+	if maxAge > 0 {
+		cutoff := time.Now().Add(-maxAge).Unix()
+		_, _ = s.db.Exec(`DELETE FROM outbound_hourly WHERE hour < ?`, cutoff)
 	}
 }
 
