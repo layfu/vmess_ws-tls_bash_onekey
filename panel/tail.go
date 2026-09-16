@@ -109,7 +109,7 @@ func parseSingboxInbound(line string) (id, username, source, target string, ok b
 	if m == nil {
 		return "", "", "", "", false
 	}
-	username = m[1]
+	username = baseUserName(m[1])
 	source = stripScheme(m[2])
 	target = stripScheme(m[3])
 	if target == "" {
@@ -198,6 +198,17 @@ func (m *singboxMatcher) pruneLocked() {
 			delete(m.pending, id)
 		}
 	}
+}
+
+// baseUserName strips the installer's protocol namespace ("v:" for VMess,
+// "a:" for AnyTLS) that is prefixed to sing-box user names so that same-named
+// users on different protocols get separate per-user stats. The panel stores and
+// displays the base name.
+func baseUserName(user string) string {
+	if strings.HasPrefix(user, "v:") || strings.HasPrefix(user, "a:") {
+		return user[2:]
+	}
+	return user
 }
 
 func stripScheme(s string) string {

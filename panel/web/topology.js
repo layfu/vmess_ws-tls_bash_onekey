@@ -47,6 +47,7 @@
   let nodeCenter = new Map();
   let adjacency = new Map();
   let userPaths = {};
+  let userHover = null;
   let hovered = null;
   let hiddenByTab = document.hidden;
   let offscreen = false;
@@ -164,6 +165,8 @@
     edgeEls = new Map();
     edgeList = [];
     adjacency = new Map();
+    userHover = null;
+    hovered = null;
   }
 
   function buildAdjacency() {
@@ -186,6 +189,7 @@
       const el = document.createElement('div');
       el.className = 'topo-node kind-' + n.kind + (n.unit === 'count' ? ' unit-count' : '');
       el.dataset.id = n.id;
+      el.dataset.unit = n.unit;
       el.style.left = (c.x - NODE_W / 2) + 'px';
       el.style.top = (c.y - NODE_H / 2) + 'px';
       el.style.width = NODE_W + 'px';
@@ -315,21 +319,72 @@
     }
   }
 
+  // 悬停用户时，把该用户路径上的节点数值与连线粗细换成"该用户自己"的流量，
+  // 让每条链路的数值都对应这个人，而不是全体合计。
+  function applyUserValues() {
+    if (!userHover) return;
+    let maxBytes = 1;
+    let maxCount = 1;
+    for (const [i, v] of userHover.links) {
+      const l = data.links[i];
+      if (!l) continue;
+      if ((l.unit || 'bytes') === 'count') {
+        if (v > maxCount) maxCount = v;
+      } else if (v > maxBytes) {
+        maxBytes = v;
+      }
+    }
+    for (const [i, v] of userHover.links) {
+      const l = data.links[i];
+      const e = edgeList[i];
+      if (!l || !e) continue;
+      const max = (l.unit || 'bytes') === 'count' ? maxCount : maxBytes;
+      e.track.setAttribute('stroke-width', String(1 + Math.min(1, v / Math.max(max, 1)) * 5 + 6));
+    }
+    for (const [nid, v] of userHover.nodes) {
+      const el = nodeEls.get(nid);
+      if (!el) continue;
+      const c = el.querySelector('.topo-node-count');
+      if (c) c.textContent = fmtValue(v, el.dataset.unit);
+    }
+  }
+
+  function clearUserValues() {
+    userHover = null;
+    const maxBytes = unitMax(data.links, 'bytes');
+    const maxCount = unitMax(data.links, 'count');
+    for (const n of data.nodes) {
+      const el = nodeEls.get(n.id);
+      if (!el) continue;
+      const c = el.querySelector('.topo-node-count');
+      if (c) c.textContent = fmtValue(n.value, n.unit);
+    }
+    for (let i = 0; i < data.links.length; i++) {
+      const e = edgeList[i];
+      if (e) e.track.setAttribute('stroke-width', String(edgeWidth(data.links[i], maxBytes, maxCount) + 6));
+    }
+  }
+
   function highlight(id, isUser) {
     if (hovered === id) return;
     hovered = id;
     const activeNodes = new Set([id]);
     const activeEdges = new Set();
     const path = isUser ? userPaths[id] : null;
-    if (path && path.length) {
-      for (const li of path) {
-        activeEdges.add(li);
-        const l = data.links[li];
+    let links = null;
+    let nodes = null;
+    if (path && path.links && path.links.length) {
+      links = new Map();
+      for (const pl of path.links) {
+        activeEdges.add(pl.i);
+        links.set(pl.i, pl.v);
+        const l = data.links[pl.i];
         if (l) {
           activeNodes.add(l.source);
           activeNodes.add(l.target);
         }
       }
+      nodes = new Map(Object.entries(path.nodes || {}));
     } else {
       const nbrs = adjacency.get(id) || new Set();
       for (const nb of nbrs) activeNodes.add(nb);
@@ -343,12 +398,19 @@
       const e = edgeList[i];
       if (e) e.g.classList.toggle('dim', !activeEdges.has(i));
     }
+    if (links) {
+      userHover = { links, nodes };
+      applyUserValues();
+    } else if (userHover) {
+      clearUserValues();
+    }
   }
 
   function clearHighlight() {
     hovered = null;
     for (const el of nodeEls.values()) el.classList.remove('dim');
     for (const e of edgeEls.values()) e.g.classList.remove('dim');
+    if (userHover) clearUserValues();
   }
 
   function renderSummary() {
@@ -382,6 +444,7 @@
       buildEdges();
     } else {
       updateInPlace();
+      if (userHover) applyUserValues();
     }
     renderSummary();
     applyPause();

@@ -52,6 +52,16 @@ CREATE TABLE IF NOT EXISTS target_traffic (
   downlink INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (protocol, host, status, hour)
 );
+CREATE TABLE IF NOT EXISTS user_target_traffic (
+  username TEXT NOT NULL,
+  protocol TEXT NOT NULL,
+  host TEXT NOT NULL,
+  status TEXT NOT NULL,
+  hour INTEGER NOT NULL,
+  uplink INTEGER NOT NULL DEFAULT 0,
+  downlink INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (username, protocol, host, status, hour)
+);
 CREATE TABLE IF NOT EXISTS outbound_hourly (
   tag TEXT NOT NULL,
   hour INTEGER NOT NULL,
@@ -69,6 +79,7 @@ CREATE TABLE IF NOT EXISTS inbound_hourly (
 CREATE INDEX IF NOT EXISTS idx_connections_ts ON connections(ts);
 CREATE INDEX IF NOT EXISTS idx_hourly_hour ON hourly(hour);
 CREATE INDEX IF NOT EXISTS idx_target_traffic_hour ON target_traffic(hour);
+CREATE INDEX IF NOT EXISTS idx_user_target_traffic_hour ON user_target_traffic(hour);
 CREATE INDEX IF NOT EXISTS idx_outbound_hourly_hour ON outbound_hourly(hour);
 CREATE INDEX IF NOT EXISTS idx_inbound_hourly_hour ON inbound_hourly(hour);
 `
@@ -123,6 +134,12 @@ func migrate(db *sql.DB) error {
 				}
 			}
 		}
+	}
+	// Legacy aggregate target traffic predates per-user tracking. Fold it in with
+	// an empty username so the topology's target layer keeps its history.
+	if _, err := db.Exec(`INSERT OR IGNORE INTO user_target_traffic (username, protocol, host, status, hour, uplink, downlink)
+		SELECT '', protocol, host, status, hour, uplink, downlink FROM target_traffic`); err != nil {
+		return err
 	}
 	return nil
 }
@@ -430,22 +447,55 @@ type targetTrafficRow struct {
 	Downlink int64
 }
 
-// addTargetTraffic accumulates per-destination bytes (collected from the
-// sing-box Clash API) into the current hour bucket.
-func (s *store) addTargetTraffic(protocol, host, status string, hour, uplink, downlink int64) error {
+// addUserTargetTraffic accumulates per-(user,destination) bytes (collected from
+// the sing-box Clash API, which we patch to expose the authenticated user) into
+// the current hour bucket. This is what lets the topology show a user's own
+// traffic along its route.
+func (s *store) addUserTargetTraffic(username, protocol, host, status string, hour, uplink, downlink int64) error {
 	_, err := s.db.Exec(
-		`INSERT INTO target_traffic (protocol, host, status, hour, uplink, downlink) VALUES (?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(protocol, host, status, hour) DO UPDATE SET
+		`INSERT INTO user_target_traffic (username, protocol, host, status, hour, uplink, downlink) VALUES (?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(username, protocol, host, status, hour) DO UPDATE SET
 		   uplink = uplink + excluded.uplink,
 		   downlink = downlink + excluded.downlink`,
-		protocol, host, status, hour, uplink, downlink,
+		username, protocol, host, status, hour, uplink, downlink,
 	)
 	return err
 }
 
+type userTargetTrafficRow struct {
+	Username string
+	Protocol string
+	Host     string
+	Status   string
+	Uplink   int64
+	Downlink int64
+}
+
+func (s *store) userTargetTraffic(since int64) ([]userTargetTrafficRow, error) {
+	rows, err := s.db.Query(
+		`SELECT username, protocol, host, status, SUM(uplink), SUM(downlink) FROM user_target_traffic
+		 WHERE hour >= ? GROUP BY username, protocol, host, status`,
+		since,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []userTargetTrafficRow
+	for rows.Next() {
+		var r userTargetTrafficRow
+		if err := rows.Scan(&r.Username, &r.Protocol, &r.Host, &r.Status, &r.Uplink, &r.Downlink); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// targetTraffic returns per-(protocol,host,status) bytes aggregated over users.
 func (s *store) targetTraffic(since int64) ([]targetTrafficRow, error) {
 	rows, err := s.db.Query(
-		`SELECT protocol, host, status, SUM(uplink), SUM(downlink) FROM target_traffic
+		`SELECT protocol, host, status, SUM(uplink), SUM(downlink) FROM user_target_traffic
 		 WHERE hour >= ? GROUP BY protocol, host, status`,
 		since,
 	)
@@ -497,6 +547,7 @@ func (s *store) pruneTargetTraffic(maxAge time.Duration) {
 	if maxAge > 0 {
 		cutoff := time.Now().Add(-maxAge).Unix()
 		_, _ = s.db.Exec(`DELETE FROM target_traffic WHERE hour < ?`, cutoff)
+		_, _ = s.db.Exec(`DELETE FROM user_target_traffic WHERE hour < ?`, cutoff)
 	}
 }
 

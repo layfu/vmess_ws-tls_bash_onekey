@@ -158,6 +158,19 @@ type topoLink struct {
 	Unit   string `json:"unit"`
 }
 
+// topoPathLink is one link on a user's own route, with the user's value.
+type topoPathLink struct {
+	Index int   `json:"i"`
+	Value int64 `json:"v"`
+}
+
+// topoPath is a single user's route with that user's own traffic at each node
+// and link, so the UI can show a user's flow on hover.
+type topoPath struct {
+	Links []topoPathLink   `json:"links"`
+	Nodes map[string]int64 `json:"nodes"`
+}
+
 const topoTopN = 10
 
 // topology aggregates recent traffic into a layered routing graph:
@@ -180,6 +193,11 @@ func (a *api) topology(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	userTargetRows, err := a.store.userTargetTraffic(since)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	outboundBytes, err := a.store.outboundTraffic(since)
 	if err != nil {
 		writeErr(w, err)
@@ -195,7 +213,7 @@ func (a *api) topology(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	nodes, links, totals, userPaths := buildTopology(userRows, targetRows, outboundBytes, inboundBytes, connRows)
+	nodes, links, totals, userPaths := buildTopology(userRows, targetRows, outboundBytes, inboundBytes, userTargetRows, connRows)
 	if nodes == nil {
 		nodes = []topoNode{}
 	}
@@ -206,7 +224,7 @@ func (a *api) topology(w http.ResponseWriter, r *http.Request) {
 		totals = map[string]int64{}
 	}
 	if userPaths == nil {
-		userPaths = map[string][]int{}
+		userPaths = map[string]*topoPath{}
 	}
 	writeJSON(w, map[string]any{
 		"nodes":        nodes,
@@ -223,8 +241,9 @@ func (a *api) topology(w http.ResponseWriter, r *http.Request) {
 // Direct/WARP are measured in bytes: the accurate outbound total comes from the
 // v2ray_api outbound stats, and the Clash per-target sample is scaled to match.
 // Blocked is measured in attempts (count). Users/targets beyond the top N are
-// merged into an "其他" node. userPaths maps a user node to its route links.
-func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, outboundBytes map[string]int64, inboundBytes map[string]int64, connRows []connGraphRow) ([]topoNode, []topoLink, map[string]int64, map[string][]int) {
+// merged into an "其他" node. userPaths maps a user node to its own route with
+// that user's own traffic on each node/link (for hover).
+func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, outboundBytes map[string]int64, inboundBytes map[string]int64, userTargetRows []userTargetTrafficRow, connRows []connGraphRow) ([]topoNode, []topoLink, map[string]int64, map[string]*topoPath) {
 	userBytes := map[string]int64{}
 	protoBytes := map[string]int64{}
 	userProto := map[[2]string]int64{}
@@ -474,43 +493,91 @@ func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, out
 	for i, l := range links {
 		linkIndex[[2]string{l.Source, l.Target}] = i
 	}
-	pathSets := map[string]map[int]bool{}
-	for _, r := range connRows {
-		if r.Username == "" {
+
+	// Per-user route with values, so hovering a user shows that user's own
+	// traffic on every segment. user/protocol come from the namespaced per-user
+	// stats; outbound/target come from the Clash API, which the build patches to
+	// expose the authenticated user on each connection.
+	userOut := map[[2]string]int64{}    // (userKey, status) -> bytes
+	userTarget := map[[3]string]int64{} // (userKey, status, host) -> bytes
+	for _, r := range userTargetRows {
+		if r.Username == "" || r.Host == "" {
+			continue
+		}
+		b := r.Uplink + r.Downlink
+		if b == 0 {
 			continue
 		}
 		status := r.Status
 		if status == "" {
 			status = "unknown"
 		}
-		uk := userKey(r.Username)
-		pk := "proto:" + r.Protocol
-		outk := "out:" + status
-		var tk string
 		if status == "blocked" {
-			tk = blockedKey(normalizeTarget(r.Target))
-		} else {
-			tk = targetKey(normalizeTarget(r.Target))
+			continue
 		}
-		set := pathSets[uk]
-		if set == nil {
-			set = map[int]bool{}
-			pathSets[uk] = set
+		uk := userKey(r.Username)
+		userOut[[2]string{uk, status}] += b
+		userTarget[[3]string{uk, status, r.Host}] += b
+	}
+	userBlocked := map[[2]string]int64{} // (userKey, host) -> attempts
+	for _, r := range connRows {
+		if r.Username == "" || r.Status != "blocked" {
+			continue
 		}
-		for _, key := range [][2]string{{uk, pk}, {pk, "srv"}, {"srv", outk}, {outk, tk}} {
-			if i, ok := linkIndex[key]; ok {
-				set[i] = true
-			}
+		host := normalizeTarget(r.Target)
+		if host == "" {
+			continue
+		}
+		userBlocked[[2]string{userKey(r.Username), host}] += r.Count
+	}
+
+	userPaths := map[string]*topoPath{}
+	pathFor := func(uk string) *topoPath {
+		p := userPaths[uk]
+		if p == nil {
+			p = &topoPath{Nodes: map[string]int64{}}
+			userPaths[uk] = p
+		}
+		return p
+	}
+	addPathLink := func(p *topoPath, key [2]string, v int64) {
+		if i, ok := linkIndex[key]; ok && v > 0 {
+			p.Links = append(p.Links, topoPathLink{Index: i, Value: v})
 		}
 	}
-	userPaths := make(map[string][]int, len(pathSets))
-	for uk, set := range pathSets {
-		idxs := make([]int, 0, len(set))
-		for i := range set {
-			idxs = append(idxs, i)
-		}
-		sort.Ints(idxs)
-		userPaths[uk] = idxs
+	for uk, total := range userNodeBytes {
+		p := pathFor(uk)
+		p.Nodes[uk] = total
+		p.Nodes["srv"] = total
+	}
+	for pair, b := range userProto {
+		uk, proto := userKey(pair[0]), pair[1]
+		p := pathFor(uk)
+		p.Nodes["proto:"+proto] = b
+		addPathLink(p, [2]string{uk, "proto:" + proto}, b)
+		addPathLink(p, [2]string{"proto:" + proto, "srv"}, b)
+	}
+	for pair, b := range userOut {
+		uk, status := pair[0], pair[1]
+		p := pathFor(uk)
+		p.Nodes["out:"+status] = b
+		addPathLink(p, [2]string{"srv", "out:" + status}, b)
+	}
+	for pair, b := range userTarget {
+		uk, status, host := pair[0], pair[1], pair[2]
+		p := pathFor(uk)
+		tk := targetKey(host)
+		p.Nodes[tk] = b
+		addPathLink(p, [2]string{"out:" + status, tk}, b)
+	}
+	for pair, c := range userBlocked {
+		uk, host := pair[0], pair[1]
+		p := pathFor(uk)
+		tk := blockedKey(host)
+		p.Nodes[tk] = c
+		p.Nodes["out:blocked"] += c
+		addPathLink(p, [2]string{"srv", "out:blocked"}, c)
+		addPathLink(p, [2]string{"out:blocked", tk}, c)
 	}
 
 	totals := map[string]int64{}

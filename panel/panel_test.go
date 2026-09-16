@@ -297,7 +297,11 @@ func TestBuildTopology(t *testing.T) {
 		{Username: "bob", Protocol: "anytls", Status: "blocked", Target: "ads.com:443", Count: 3},
 	}
 	inboundBytes := map[string]int64{"vmess": 300, "anytls": 100}
-	nodes, links, totals, userPaths := buildTopology(userRows, targetRows, outboundBytes, inboundBytes, connRows)
+	userTargetRows := []userTargetTrafficRow{
+		{Username: "alice", Protocol: "vmess", Host: "example.com", Status: "direct", Uplink: 100, Downlink: 200},
+		{Username: "bob", Protocol: "anytls", Host: "ads.com", Status: "blocked", Uplink: 50, Downlink: 50},
+	}
+	nodes, links, totals, userPaths := buildTopology(userRows, targetRows, outboundBytes, inboundBytes, userTargetRows, connRows)
 
 	// direct is bytes (outbound stats), blocked is attempts (count).
 	if totals["direct"] != 300 || totals["blocked"] != 3 {
@@ -337,12 +341,16 @@ func TestBuildTopology(t *testing.T) {
 		t.Errorf("links = %+v", links)
 	}
 
-	alice := map[string]bool{}
-	for _, i := range userPaths["user:alice"] {
-		if i < 0 || i >= len(links) {
-			t.Fatalf("alice path index out of range: %d", i)
+	alicePath := userPaths["user:alice"]
+	if alicePath == nil {
+		t.Fatalf("alice path missing")
+	}
+	alice := map[string]int64{}
+	for _, pl := range alicePath.Links {
+		if pl.Index < 0 || pl.Index >= len(links) {
+			t.Fatalf("alice path index out of range: %d", pl.Index)
 		}
-		alice[links[i].Source+"->"+links[i].Target] = true
+		alice[links[pl.Index].Source+"->"+links[pl.Index].Target] = pl.Value
 	}
 	for _, want := range []string{
 		"user:alice->proto:vmess",
@@ -350,20 +358,37 @@ func TestBuildTopology(t *testing.T) {
 		"srv->out:direct",
 		"out:direct->target:example.com",
 	} {
-		if !alice[want] {
+		if _, ok := alice[want]; !ok {
 			t.Errorf("alice path missing %q; got %+v", want, alice)
 		}
 	}
-	// bob never used direct/example.com, so those must not be in his path.
-	bob := map[string]bool{}
-	for _, i := range userPaths["user:bob"] {
-		bob[links[i].Source+"->"+links[i].Target] = true
+	// per-user values: alice's own 300 bytes on every segment of her route.
+	if alice["out:direct->target:example.com"] != 300 {
+		t.Errorf("alice target link = %d (want 300)", alice["out:direct->target:example.com"])
 	}
-	if bob["srv->out:direct"] || bob["out:direct->target:example.com"] {
+	if v := alicePath.Nodes["target:example.com"]; v != 300 {
+		t.Errorf("alice target node = %d (want 300)", v)
+	}
+	if v := alicePath.Nodes["user:alice"]; v != 300 {
+		t.Errorf("alice user node = %d (want 300)", v)
+	}
+	// bob never used direct/example.com, so those must not be in his path.
+	bobPath := userPaths["user:bob"]
+	if bobPath == nil {
+		t.Fatalf("bob path missing")
+	}
+	bob := map[string]int64{}
+	for _, pl := range bobPath.Links {
+		bob[links[pl.Index].Source+"->"+links[pl.Index].Target] = pl.Value
+	}
+	if _, ok := bob["srv->out:direct"]; ok {
 		t.Errorf("bob path unexpectedly includes direct route: %+v", bob)
 	}
-	if !bob["srv->out:blocked"] || !bob["out:blocked->btarget:ads.com"] {
-		t.Errorf("bob blocked path missing: %+v", bob)
+	if _, ok := bob["out:direct->target:example.com"]; ok {
+		t.Errorf("bob path unexpectedly includes direct target: %+v", bob)
+	}
+	if bob["srv->out:blocked"] != 3 || bob["out:blocked->btarget:ads.com"] != 3 {
+		t.Errorf("bob blocked path = %+v (want 3)", bob)
 	}
 }
 
@@ -378,7 +403,7 @@ func TestBuildTopologyScalesTargetsToOutbound(t *testing.T) {
 		{Protocol: "vmess", Host: "b.com", Status: "warp", Uplink: 40, Downlink: 0},
 	}
 	outboundBytes := map[string]int64{"warp": 400}
-	nodes, _, _, _ := buildTopology(userRows, targetRows, outboundBytes, nil, nil)
+	nodes, _, _, _ := buildTopology(userRows, targetRows, outboundBytes, nil, nil, nil)
 	byID := map[string]topoNode{}
 	for _, n := range nodes {
 		byID[n.ID] = n
@@ -405,7 +430,7 @@ func TestBuildTopologyProtocolUsesInbound(t *testing.T) {
 	}
 	outboundBytes := map[string]int64{"warp": 100}
 	inboundBytes := map[string]int64{"vmess": 70, "anytls": 30}
-	nodes, _, _, _ := buildTopology(userRows, targetRows, outboundBytes, inboundBytes, nil)
+	nodes, _, _, _ := buildTopology(userRows, targetRows, outboundBytes, inboundBytes, nil, nil)
 	byID := map[string]topoNode{}
 	for _, n := range nodes {
 		byID[n.ID] = n
@@ -430,7 +455,7 @@ func TestBuildTopologySkipsUnknownUser(t *testing.T) {
 		{Protocol: "vmess", Host: "example.com", Status: "direct", Uplink: 5, Downlink: 5},
 	}
 	outboundBytes := map[string]int64{"direct": 10}
-	nodes, _, totals, userPaths := buildTopology(userRows, targetRows, outboundBytes, nil, nil)
+	nodes, _, totals, userPaths := buildTopology(userRows, targetRows, outboundBytes, nil, nil, nil)
 	if totals["direct"] != 10 {
 		t.Errorf("totals = %+v", totals)
 	}
@@ -469,7 +494,7 @@ func TestBuildTopologyOtherBuckets(t *testing.T) {
 		})
 	}
 	outboundBytes := map[string]int64{"direct": 1200}
-	nodes, links, _, userPaths := buildTopology(userRows, targetRows, outboundBytes, nil, connRows)
+	nodes, links, _, userPaths := buildTopology(userRows, targetRows, outboundBytes, nil, nil, connRows)
 	byID := map[string]topoNode{}
 	for _, n := range nodes {
 		byID[n.ID] = n
@@ -503,7 +528,7 @@ func TestBuildTopologyOtherBuckets(t *testing.T) {
 		t.Errorf("other buckets missing links: %+v", links)
 	}
 	// the merged user must still have a full path
-	if len(userPaths["user:__other__"]) == 0 {
+	if p := userPaths["user:__other__"]; p == nil || len(p.Links) == 0 {
 		t.Errorf("other user has no path")
 	}
 }
@@ -545,5 +570,69 @@ func TestHourlyRange(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].Protocol != "anytls" || rows[0].Username != "bob" {
 		t.Errorf("username filter failed: %+v", rows)
+	}
+}
+
+func TestClashUser(t *testing.T) {
+	cases := map[string]string{
+		"v:alice": "alice",
+		"a:bob":   "bob",
+		"admin":   "admin",
+		"":        "",
+	}
+	for in, want := range cases {
+		if got := clashUser(in); got != want {
+			t.Errorf("clashUser(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestUserTargetTraffic(t *testing.T) {
+	st, err := openStore(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	base := time.Unix(1700000000, 0).Truncate(time.Hour)
+	if err := st.addUserTargetTraffic("alice", "vmess", "a.com", "direct", base.Unix(), 10, 20); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.addUserTargetTraffic("alice", "vmess", "a.com", "direct", base.Unix(), 1, 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.addUserTargetTraffic("bob", "anytls", "a.com", "warp", base.Unix(), 5, 5); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := st.userTargetTraffic(base.Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("user target rows = %+v", rows)
+	}
+	byUser := map[string]userTargetTrafficRow{}
+	for _, r := range rows {
+		byUser[r.Username] = r
+	}
+	if r := byUser["alice"]; r.Uplink != 11 || r.Downlink != 22 || r.Host != "a.com" || r.Status != "direct" {
+		t.Errorf("alice row = %+v", r)
+	}
+
+	// the aggregate view collapses users
+	trows, err := st.targetTraffic(base.Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(trows) != 2 {
+		t.Fatalf("target rows = %+v", trows)
+	}
+	var total int64
+	for _, r := range trows {
+		total += r.Uplink + r.Downlink
+	}
+	if total != 43 {
+		t.Errorf("aggregate total = %d, want 43", total)
 	}
 }

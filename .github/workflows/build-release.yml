@@ -116,8 +116,30 @@ jobs:
 
       - name: Patch AnyTLS/VMess inbound log (include source address)
         run: |
+          set -e
           sed -i 's/inbound connection to ", metadata.Destination)/inbound connection from ", metadata.Source, " to ", metadata.Destination)/g' protocol/anytls/inbound.go
           sed -i 's/\[", user, "\] inbound connection to ", metadata.Destination)/[", user, "] inbound connection from ", metadata.Source, " to ", metadata.Destination)/g' protocol/vmess/inbound.go
+          grep -q 'inbound connection from ", metadata.Source' protocol/anytls/inbound.go
+          grep -q 'inbound connection from ", metadata.Source' protocol/vmess/inbound.go
+
+      - name: Patch Clash API connection metadata (include user)
+        run: |
+          set -e
+          patched=0
+          # sing-box >= v1.14 moved this to experimental/clashapi/connections.go
+          if [ -f experimental/clashapi/connections.go ]; then
+            sed -i 's/\("processPath":[[:space:]]*processPath,\)/\1 "user": c.Metadata.User,/' experimental/clashapi/connections.go
+            if grep -q '"user": c.Metadata.User' experimental/clashapi/connections.go; then patched=1; fi
+          fi
+          # sing-box < v1.14 kept it in experimental/clashapi/trafficontrol/tracker.go
+          if [ "$patched" -eq 0 ] && [ -f experimental/clashapi/trafficontrol/tracker.go ]; then
+            sed -i 's/\("processPath":[[:space:]]*processPath,\)/\1 "user": t.Metadata.User,/' experimental/clashapi/trafficontrol/tracker.go
+            if grep -q '"user": t.Metadata.User' experimental/clashapi/trafficontrol/tracker.go; then patched=1; fi
+          fi
+          if [ "$patched" -eq 0 ]; then
+            echo "::error::could not patch sing-box Clash API to expose the connection user"
+            exit 1
+          fi
 
       - uses: actions/setup-go@v5
         with:

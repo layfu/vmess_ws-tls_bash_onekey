@@ -29,6 +29,7 @@ type clashConnBytes struct {
 }
 
 type targetKey struct {
+	username string
 	protocol string
 	host     string
 	status   string
@@ -46,6 +47,7 @@ type clashConnection struct {
 		Type          string `json:"type"`
 		Host          string `json:"host"`
 		DestinationIP string `json:"destinationIP"`
+		User          string `json:"user"`
 	} `json:"metadata"`
 	Chains []string `json:"chains"`
 }
@@ -129,6 +131,7 @@ func (p *clashPoller) poll(ctx context.Context) {
 			continue
 		}
 		key := targetKey{
+			username: clashUser(c.Metadata.User),
 			protocol: clashProtocol(c.Metadata.Type),
 			host:     strings.ToLower(host),
 			status:   clashStatus(c.Chains),
@@ -155,10 +158,20 @@ func (p *clashPoller) flush() {
 	}
 	hour := time.Now().Truncate(time.Hour).Unix()
 	for k, d := range buf {
-		if err := p.store.addTargetTraffic(k.protocol, k.host, k.status, hour, d.up, d.down); err != nil {
+		if err := p.store.addUserTargetTraffic(k.username, k.protocol, k.host, k.status, hour, d.up, d.down); err != nil {
 			log.Printf("clash flush: %v", err)
 		}
 	}
+}
+
+// clashUser strips the installer's protocol namespace ("v:"/"a:") from the
+// sing-box user name exposed by the patched Clash API, so it matches the
+// per-user stats and the users files.
+func clashUser(user string) string {
+	if strings.HasPrefix(user, "v:") || strings.HasPrefix(user, "a:") {
+		return user[2:]
+	}
+	return user
 }
 
 func clashProtocol(inbound string) string {
