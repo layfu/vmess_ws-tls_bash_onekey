@@ -40,7 +40,8 @@ func newCollector(st *store, cfg *Config, onlineWindow int) (*collector, error) 
 			c.sources = append(c.sources, &protoSource{protocol: "vmess", source: src, usersFile: cfg.V2Ray.UsersFile})
 		}
 	}
-	if cfg.SingBox.Enabled && cfg.SingBox.APIAddr != "" {
+	// sing-box 同时承载 VMess 与 AnyTLS，只要配置了统计地址就采集（用户文件为空则跳过）。
+	if cfg.SingBox.APIAddr != "" {
 		src, err := newStatsSource(cfg.SingBox.APIAddr)
 		if err != nil {
 			log.Printf("sing-box stats api %s: %v", cfg.SingBox.APIAddr, err)

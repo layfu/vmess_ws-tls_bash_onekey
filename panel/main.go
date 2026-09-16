@@ -47,9 +47,11 @@ func main() {
 	go col.run(ctx, time.Duration(cfg.PollIntervalSec)*time.Second)
 	startLogTailers(st, cfg)
 
-	if cfg.SingBox.Enabled && cfg.SingBox.ClashAPIAddr != "" {
+	// 只要配置了 Clash API 地址就轮询目标流量（不依赖 singbox.enabled 标记，
+	// 避免旧配置未重生成时轮询器不启动）。
+	if cfg.SingBox.ClashAPIAddr != "" {
 		cp := newClashPoller(st, cfg.SingBox.ClashAPIAddr)
-		go cp.run(ctx, 2*time.Second)
+		go cp.run(ctx, time.Second)
 	}
 
 	st.prune(24*time.Hour, 20000)
