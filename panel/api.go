@@ -302,7 +302,9 @@ func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, out
 		}
 	}
 
-	// Direct/WARP: scale the Clash target distribution to the accurate outbound total.
+	// Direct/WARP: scale the Clash target distribution to the accurate outbound
+	// total. If the outbound stats have no value for a status (e.g. they were
+	// reset), fall back to the raw Clash sample instead of dropping the targets.
 	targetBytes := map[string]int64{}
 	outTarget := map[[2]string]int64{}
 	for pair, b := range clashOutTarget {
@@ -310,11 +312,7 @@ func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, out
 		if status == "blocked" {
 			continue
 		}
-		denom := clashStatus[status]
-		if denom <= 0 || outBytes[status] <= 0 {
-			continue
-		}
-		scaled := b * outBytes[status] / denom
+		scaled := scaleToOutbound(b, clashStatus[status], outBytes[status])
 		if scaled <= 0 {
 			continue
 		}
@@ -520,11 +518,7 @@ func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, out
 		if status == "blocked" {
 			continue
 		}
-		denom := clashStatus[status]
-		if denom <= 0 || outBytes[status] <= 0 {
-			continue
-		}
-		scaled := b * outBytes[status] / denom
+		scaled := scaleToOutbound(b, clashStatus[status], outBytes[status])
 		if scaled <= 0 {
 			continue
 		}
@@ -605,6 +599,20 @@ func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, out
 	}
 
 	return nodes, links, totals, userPaths
+}
+
+// scaleToOutbound scales a Clash sample (sample) up to the accurate outbound
+// total (total) using the Clash status total (denom) as the denominator. When
+// the outbound total or the denominator is unavailable, the raw sample is
+// returned so callers never drop data they actually have.
+func scaleToOutbound(sample, denom, total int64) int64 {
+	if sample <= 0 {
+		return 0
+	}
+	if denom > 0 && total > 0 {
+		return sample * total / denom
+	}
+	return sample
 }
 
 // topoLayer maps a node kind to its column: user=0, protocol=1, server=2,

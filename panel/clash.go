@@ -16,12 +16,13 @@ import (
 // outbound). Only active connections are visible, so very short connections
 // between polls are not counted; long-lived transfers dominate the totals.
 type clashPoller struct {
-	store  *store
-	addr   string
-	client *http.Client
-	mu     sync.Mutex
-	last   map[string]clashConnBytes
-	buf    map[targetKey]trafficDelta
+	store     *store
+	addr      string
+	client    *http.Client
+	mu        sync.Mutex
+	last      map[string]clashConnBytes
+	buf       map[targetKey]trafficDelta
+	lastDebug time.Time
 }
 
 type clashConnBytes struct {
@@ -100,6 +101,21 @@ func (p *clashPoller) poll(ctx context.Context) {
 	var snap clashSnapshot
 	if err := json.NewDecoder(resp.Body).Decode(&snap); err != nil {
 		return
+	}
+
+	// Diagnostic: dump a few raw connections once a minute so the topology's
+	// target layer can be debugged (check `journalctl -u panel | grep clash:`).
+	if time.Since(p.lastDebug) >= time.Minute {
+		p.lastDebug = time.Now()
+		log.Printf("clash: %d active connections", len(snap.Connections))
+		for i, c := range snap.Connections {
+			if i >= 8 {
+				break
+			}
+			log.Printf("clash: type=%q user=%q host=%q dst=%q chains=%v up=%d down=%d",
+				c.Metadata.Type, c.Metadata.User, c.Metadata.Host, c.Metadata.DestinationIP,
+				c.Chains, c.Upload, c.Download)
+		}
 	}
 
 	p.mu.Lock()
