@@ -22,7 +22,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.9.28"
+shell_version="1.6.9.29"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -85,6 +85,7 @@ panel_clash_api_port="50087"
 panel_geo_db="/etc/panel/ip2region_v4.xdb"
 singbox_log_file="/var/log/sing-box/sing-box.log"
 singbox_vmess_port_file="/etc/sing-box/vmess_port"
+singbox_anytls_port_file="/etc/sing-box/anytls_port"
 nginx_ws_access_log="/var/log/nginx/ws-access.log"
 panel_repo="layfu/vmess_ws-tls_bash_onekey"
 # v2ray_plugin_version="$(wget -qO- "https://github.com/shadowsocks/v2ray-plugin/tags" | grep -E "/shadowsocks/v2ray-plugin/releases/tag/" | head -1 | sed -r 's/.*tag\/v(.+)\">.*/\1/')"
@@ -1067,7 +1068,7 @@ anytls_users_ensure() {
         mkdir -p "${singbox_conf_dir}"
         local existing_pass=""
         if [[ -f "${singbox_conf}" ]]; then
-            existing_pass="$(grep '\"password\"' "${singbox_conf}" | awk -F '"' '{print $4}' | head -1)"
+            existing_pass="$(grep -o '\"password\":\"[^\"]*\"' "${singbox_conf}" | head -1 | cut -d'\"' -f4)"
         fi
         [[ -z "${existing_pass}" ]] && existing_pass="$(anytls_gen_password)"
         echo "anytls ${existing_pass}" >"${anytls_users_file}"
@@ -1723,8 +1724,14 @@ singbox_conf_add() {
         fi
     fi
 
-    [[ -z "${anytls_port}" ]] && anytls_port="$(grep '\"listen_port\"' "${singbox_conf}" 2>/dev/null | tail -1 | awk -F ':' '{print $2}' | tr -d ' ,')"
-    [[ -z "${anytls_port}" ]] && anytls_port="8443"
+    # AnyTLS 端口：优先用调用方传入的全局值，其次读端口文件，最后默认 8443。
+    # 注意：不能再从 config.json 里 awk 解析——两个入口在同一行，会解析出错误字符串。
+    if [[ -z "${anytls_port}" && -f "${singbox_anytls_port_file}" ]]; then
+        anytls_port="$(cat "${singbox_anytls_port_file}")"
+    fi
+    [[ ! "${anytls_port}" =~ ^[0-9]+$ ]] && anytls_port="8443"
+    mkdir -p "${singbox_conf_dir}"
+    echo "${anytls_port}" >"${singbox_anytls_port_file}"
 
     local anytls_inbound=""
     if [[ -n "${anytls_users_json}" ]]; then
@@ -1829,7 +1836,10 @@ surge_config_output() {
         return 1
     fi
     anytls_users_ensure
-    [[ -z "${anytls_port}" ]] && anytls_port="$(grep '\"listen_port\"' "${singbox_conf}" | awk -F ':' '{print $2}' | tr -d ' ,')"
+    if [[ -z "${anytls_port}" && -f "${singbox_anytls_port_file}" ]]; then
+        anytls_port="$(cat "${singbox_anytls_port_file}")"
+    fi
+    [[ ! "${anytls_port}" =~ ^[0-9]+$ ]] && anytls_port="8443"
     local domain=""
     [[ -f "${anytls_domain_file}" ]] && domain="$(cat ${anytls_domain_file})"
     [[ -z "${domain}" && -f "${v2ray_qr_config_file}" ]] && domain="$(grep '\"add\"' ${v2ray_qr_config_file} | awk -F '"' '{print $4}')"
