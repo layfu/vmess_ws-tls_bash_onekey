@@ -157,6 +157,15 @@ jobs:
             grep -q 'closedConnectionsLimit = 20000' common/trafficcontrol/manager.go
           fi
 
+      - name: Patch v2ray_api stats to add per-(user,outbound) counter
+        run: |
+          set -e
+          # sing-box only has user>>> and outbound>>>; add the cross so the panel
+          # can read the exact traffic of a user on a specific outbound.
+          sed -i 's|\(writeCounter = append(writeCounter, s.loadOrCreateCounter("user>>>"+user+">>>traffic>>>downlink"))\)|\1\n\t\tif countOutbound {\n\t\t\treadCounter = append(readCounter, s.loadOrCreateCounter("user_outbound>>>"+user+">>>"+outbound+">>>traffic>>>uplink"))\n\t\t\twriteCounter = append(writeCounter, s.loadOrCreateCounter("user_outbound>>>"+user+">>>"+outbound+">>>traffic>>>downlink"))\n\t\t}|' experimental/v2rayapi/stats.go
+          sed -i 's|\(downlinkCounter = append(downlinkCounter, s.loadOrCreateCounter("user>>>"+user+">>>traffic>>>downlink"))\)|\1\n\t\tif countOutbound {\n\t\t\tuplinkCounter = append(uplinkCounter, s.loadOrCreateCounter("user_outbound>>>"+user+">>>"+outbound+">>>traffic>>>uplink"))\n\t\t\tdownlinkCounter = append(downlinkCounter, s.loadOrCreateCounter("user_outbound>>>"+user+">>>"+outbound+">>>traffic>>>downlink"))\n\t\t}|' experimental/v2rayapi/stats.go
+          test "$(grep -c 'user_outbound>>>' experimental/v2rayapi/stats.go)" -ge 6
+
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'

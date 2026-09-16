@@ -282,28 +282,44 @@ func TestStatUserName(t *testing.T) {
 	}
 }
 
+// sumCells adds the cell values matching the given unit and node ids ("" = any).
+func sumCells(cells []topoCell, unit, user, proto, out, target string) int64 {
+	var sum int64
+	for _, c := range cells {
+		if unit != "" && c.Unit != unit {
+			continue
+		}
+		if user != "" && c.User != user {
+			continue
+		}
+		if proto != "" && c.Protocol != proto {
+			continue
+		}
+		if out != "" && c.Outbound != out {
+			continue
+		}
+		if target != "" && c.Target != target {
+			continue
+		}
+		sum += c.Value
+	}
+	return sum
+}
+
 func TestBuildTopology(t *testing.T) {
-	userRows := []userTrafficRow{
-		{Protocol: "vmess", Username: "alice", Uplink: 100, Downlink: 200},
-		{Protocol: "anytls", Username: "bob", Uplink: 50, Downlink: 50},
-	}
-	targetRows := []targetTrafficRow{
-		{Protocol: "vmess", Host: "example.com", Status: "direct", Uplink: 100, Downlink: 200},
-		{Protocol: "anytls", Host: "ads.com", Status: "blocked", Uplink: 50, Downlink: 50},
-	}
-	outboundBytes := map[string]int64{"direct": 300, "block": 100, "warp": 0}
-	connRows := []connGraphRow{
-		{Username: "alice", Protocol: "vmess", Status: "direct", Target: "example.com:443", Count: 5},
-		{Username: "bob", Protocol: "anytls", Status: "blocked", Target: "ads.com:443", Count: 3},
-	}
-	inboundBytes := map[string]int64{"vmess": 300, "anytls": 100}
 	userTargetRows := []userTargetTrafficRow{
 		{Username: "alice", Protocol: "vmess", Host: "example.com", Status: "direct", Uplink: 100, Downlink: 200},
 		{Username: "bob", Protocol: "anytls", Host: "ads.com", Status: "blocked", Uplink: 50, Downlink: 50},
 	}
-	nodes, links, totals, userPaths := buildTopology(userRows, targetRows, outboundBytes, inboundBytes, userTargetRows, connRows)
+	userOutboundRows := []userOutboundRow{
+		{Username: "alice", Protocol: "vmess", Tag: "direct", Uplink: 100, Downlink: 200},
+	}
+	connRows := []connGraphRow{
+		{Username: "alice", Protocol: "vmess", Status: "direct", Target: "example.com:443", Count: 5},
+		{Username: "bob", Protocol: "anytls", Status: "blocked", Target: "ads.com:443", Count: 3},
+	}
+	nodes, links, totals, cells := buildTopology(userTargetRows, userOutboundRows, connRows)
 
-	// direct is bytes (outbound stats), blocked is attempts (count).
 	if totals["direct"] != 300 || totals["blocked"] != 3 {
 		t.Errorf("totals = %+v", totals)
 	}
@@ -311,7 +327,7 @@ func TestBuildTopology(t *testing.T) {
 	for _, n := range nodes {
 		byID[n.ID] = n
 	}
-	if n := byID["srv"]; n.Kind != "server" || n.Value != 400 || n.Unit != "bytes" {
+	if n := byID["srv"]; n.Kind != "server" || n.Value != 300 || n.Unit != "bytes" {
 		t.Errorf("server node = %+v", n)
 	}
 	if n := byID["user:alice"]; n.Value != 300 {
@@ -329,9 +345,6 @@ func TestBuildTopology(t *testing.T) {
 	if n := byID["btarget:ads.com"]; n.Value != 3 || n.Unit != "count" {
 		t.Errorf("ads.com blocked node = %+v", n)
 	}
-	if _, ok := byID["user:未知用户"]; ok {
-		t.Errorf("unknown user should not appear: %+v", nodes)
-	}
 
 	linkByKey := map[string]int64{}
 	for _, l := range links {
@@ -341,223 +354,138 @@ func TestBuildTopology(t *testing.T) {
 		t.Errorf("links = %+v", links)
 	}
 
-	alicePath := userPaths["user:alice"]
-	if alicePath == nil {
-		t.Fatalf("alice path missing")
+	// Cells let the frontend rebuild any hover slice; the invariant holds.
+	if got := sumCells(cells, "bytes", "user:alice", "", "", ""); got != 300 {
+		t.Errorf("alice byte cells = %d (want 300)", got)
 	}
-	alice := map[string]int64{}
-	for _, pl := range alicePath.Links {
-		if pl.Index < 0 || pl.Index >= len(links) {
-			t.Fatalf("alice path index out of range: %d", pl.Index)
-		}
-		alice[links[pl.Index].Source+"->"+links[pl.Index].Target] = pl.Value
+	if got := sumCells(cells, "bytes", "user:alice", "proto:vmess", "out:direct", "target:example.com"); got != 300 {
+		t.Errorf("alice route cells = %d (want 300)", got)
 	}
-	for _, want := range []string{
-		"user:alice->proto:vmess",
-		"proto:vmess->srv",
-		"srv->out:direct",
-		"out:direct->target:example.com",
-	} {
-		if _, ok := alice[want]; !ok {
-			t.Errorf("alice path missing %q; got %+v", want, alice)
-		}
-	}
-	// per-user values: alice's own 300 bytes on every segment of her route.
-	if alice["out:direct->target:example.com"] != 300 {
-		t.Errorf("alice target link = %d (want 300)", alice["out:direct->target:example.com"])
-	}
-	if v := alicePath.Nodes["target:example.com"]; v != 300 {
-		t.Errorf("alice target node = %d (want 300)", v)
-	}
-	if v := alicePath.Nodes["user:alice"]; v != 300 {
-		t.Errorf("alice user node = %d (want 300)", v)
-	}
-	// bob never used direct/example.com, so those must not be in his path.
-	bobPath := userPaths["user:bob"]
-	if bobPath == nil {
-		t.Fatalf("bob path missing")
-	}
-	bob := map[string]int64{}
-	for _, pl := range bobPath.Links {
-		bob[links[pl.Index].Source+"->"+links[pl.Index].Target] = pl.Value
-	}
-	if _, ok := bob["srv->out:direct"]; ok {
-		t.Errorf("bob path unexpectedly includes direct route: %+v", bob)
-	}
-	if _, ok := bob["out:direct->target:example.com"]; ok {
-		t.Errorf("bob path unexpectedly includes direct target: %+v", bob)
-	}
-	if bob["srv->out:blocked"] != 3 || bob["out:blocked->btarget:ads.com"] != 3 {
-		t.Errorf("bob blocked path = %+v (want 3)", bob)
+	if got := sumCells(cells, "count", "user:bob", "", "out:blocked", "btarget:ads.com"); got != 3 {
+		t.Errorf("bob blocked cells = %d (want 3)", got)
 	}
 }
 
-func TestBuildTopologyScalesTargetsToOutbound(t *testing.T) {
-	// Clash sample only saw 100 of the real 400 bytes on the warp outbound;
-	// the target distribution must be scaled up to 400.
-	userRows := []userTrafficRow{
-		{Protocol: "vmess", Username: "alice", Uplink: 400, Downlink: 0},
-	}
-	targetRows := []targetTrafficRow{
-		{Protocol: "vmess", Host: "a.com", Status: "warp", Uplink: 60, Downlink: 0},
-		{Protocol: "vmess", Host: "b.com", Status: "warp", Uplink: 40, Downlink: 0},
-	}
-	outboundBytes := map[string]int64{"warp": 400}
-	nodes, _, _, _ := buildTopology(userRows, targetRows, outboundBytes, nil, nil, nil)
-	byID := map[string]topoNode{}
-	for _, n := range nodes {
-		byID[n.ID] = n
-	}
-	if n := byID["out:warp"]; n.Value != 400 {
-		t.Errorf("warp node = %+v", n)
-	}
-	if n := byID["target:a.com"]; n.Value != 240 {
-		t.Errorf("a.com = %+v (want 240)", n)
-	}
-	if n := byID["target:b.com"]; n.Value != 160 {
-		t.Errorf("b.com = %+v (want 160)", n)
-	}
-}
-
-func TestBuildTopologyPerUserScaled(t *testing.T) {
-	// Clash sampled 100 bytes total on warp (60 from alice's host, 40 from
-	// bob's), but the accurate outbound total is 200 -> 2x. Per-user values must
-	// use the same factor so they stay consistent with the aggregate and never
-	// exceed it.
-	userRows := []userTrafficRow{
-		{Protocol: "vmess", Username: "alice", Uplink: 100},
-		{Protocol: "vmess", Username: "bob", Uplink: 100},
-	}
-	targetRows := []targetTrafficRow{
-		{Protocol: "vmess", Host: "a.com", Status: "warp", Uplink: 60},
-		{Protocol: "vmess", Host: "b.com", Status: "warp", Uplink: 40},
-	}
-	outboundBytes := map[string]int64{"warp": 200}
+func TestBuildTopologyReconcilesToCounter(t *testing.T) {
+	// The records only saw 100 of alice's warp bytes, but the exact counter says
+	// 300: the outbound is pinned to 300 and the targets keep their proportions.
 	userTargetRows := []userTargetTrafficRow{
 		{Username: "alice", Protocol: "vmess", Host: "a.com", Status: "warp", Uplink: 60},
-		{Username: "bob", Protocol: "vmess", Host: "b.com", Status: "warp", Uplink: 40},
+		{Username: "alice", Protocol: "vmess", Host: "b.com", Status: "warp", Uplink: 40},
 	}
-	nodes, _, _, userPaths := buildTopology(userRows, targetRows, outboundBytes, nil, userTargetRows, nil)
+	userOutboundRows := []userOutboundRow{
+		{Username: "alice", Protocol: "vmess", Tag: "warp", Uplink: 300},
+	}
+	nodes, _, _, _ := buildTopology(userTargetRows, userOutboundRows, nil)
 	byID := map[string]topoNode{}
 	for _, n := range nodes {
 		byID[n.ID] = n
 	}
-	if n := byID["target:a.com"]; n.Value != 120 {
-		t.Errorf("target a.com = %+v (want 120)", n)
+	if n := byID["user:alice"]; n.Value != 300 {
+		t.Errorf("alice = %+v (want 300)", n)
 	}
-	alice := userPaths["user:alice"]
-	if alice == nil {
-		t.Fatalf("alice path missing")
+	if n := byID["out:warp"]; n.Value != 300 {
+		t.Errorf("warp = %+v (want 300)", n)
 	}
-	if v := alice.Nodes["target:a.com"]; v != 120 {
-		t.Errorf("alice a.com = %d (want 120, scaled)", v)
+	if n := byID["target:a.com"]; n.Value != 180 {
+		t.Errorf("a.com = %+v (want 180)", n)
 	}
-	if v := alice.Nodes["out:warp"]; v != 120 {
-		t.Errorf("alice warp = %d (want 120)", v)
+	if n := byID["target:b.com"]; n.Value != 120 {
+		t.Errorf("b.com = %+v (want 120)", n)
 	}
-	if v := alice.Nodes["target:a.com"]; v > byID["target:a.com"].Value {
-		t.Errorf("per-user value %d exceeds aggregate %d", v, byID["target:a.com"].Value)
+}
+
+func TestBuildTopologyCounterWithoutRecords(t *testing.T) {
+	// The exact counter knows about the traffic even if no connection record was
+	// captured; it must still show up (attributed to an unknown target).
+	userOutboundRows := []userOutboundRow{
+		{Username: "alice", Protocol: "vmess", Tag: "warp", Uplink: 500},
+	}
+	nodes, _, _, cells := buildTopology(nil, userOutboundRows, nil)
+	byID := map[string]topoNode{}
+	for _, n := range nodes {
+		byID[n.ID] = n
+	}
+	if n := byID["user:alice"]; n.Value != 500 {
+		t.Errorf("alice = %+v (want 500)", n)
+	}
+	if n := byID["out:warp"]; n.Value != 500 {
+		t.Errorf("warp = %+v (want 500)", n)
+	}
+	if n, ok := byID["target:未知目标"]; !ok || n.Value != 500 {
+		t.Errorf("unknown target = %+v ok=%v", n, ok)
+	}
+	if got := sumCells(cells, "bytes", "user:alice", "", "", ""); got != 500 {
+		t.Errorf("alice cells = %d (want 500)", got)
+	}
+}
+
+func TestBuildTopologyMultiUserMultiOutbound(t *testing.T) {
+	// Multi-user, multi-outbound: every user's outbound marginals must add up to
+	// that user's total, and the cells must expose the exact slices.
+	userTargetRows := []userTargetTrafficRow{
+		{Username: "alice", Protocol: "vmess", Host: "a.com", Status: "warp", Uplink: 100},
+		{Username: "alice", Protocol: "vmess", Host: "b.com", Status: "direct", Uplink: 50},
+		{Username: "bob", Protocol: "anytls", Host: "a.com", Status: "warp", Uplink: 70},
+		{Username: "bob", Protocol: "anytls", Host: "c.com", Status: "warp", Uplink: 30},
+	}
+	userOutboundRows := []userOutboundRow{
+		{Username: "alice", Protocol: "vmess", Tag: "warp", Uplink: 100},
+		{Username: "alice", Protocol: "vmess", Tag: "direct", Uplink: 50},
+		{Username: "bob", Protocol: "anytls", Tag: "warp", Uplink: 100},
+	}
+	nodes, _, _, cells := buildTopology(userTargetRows, userOutboundRows, nil)
+	byID := map[string]topoNode{}
+	for _, n := range nodes {
+		byID[n.ID] = n
+	}
+	if n := byID["user:alice"]; n.Value != 150 {
+		t.Errorf("alice = %+v (want 150)", n)
+	}
+	if n := byID["user:bob"]; n.Value != 100 {
+		t.Errorf("bob = %+v (want 100)", n)
+	}
+	if n := byID["out:warp"]; n.Value != 200 {
+		t.Errorf("warp = %+v (want 200)", n)
+	}
+	if n := byID["out:direct"]; n.Value != 50 {
+		t.Errorf("direct = %+v (want 50)", n)
+	}
+	// alice: warp + direct == total
+	aliceWarp := sumCells(cells, "bytes", "user:alice", "", "out:warp", "")
+	aliceDirect := sumCells(cells, "bytes", "user:alice", "", "out:direct", "")
+	if aliceWarp != 100 || aliceDirect != 50 {
+		t.Errorf("alice warp/direct = %d/%d (want 100/50)", aliceWarp, aliceDirect)
+	}
+	if aliceWarp+aliceDirect != byID["user:alice"].Value {
+		t.Errorf("alice outbounds do not sum to total")
 	}
 }
 
 func TestBuildTopologyStripsUserNamespace(t *testing.T) {
 	// Connection-log rows written before the namespace fix still carry the
 	// "a:"/"v:" prefix; they must still be attributed to the base user.
-	userRows := []userTrafficRow{
-		{Protocol: "anytls", Username: "admin", Uplink: 10},
-	}
 	connRows := []connGraphRow{
 		{Username: "a:admin", Protocol: "anytls", Status: "blocked", Target: "ads.com:443", Count: 4},
 	}
-	_, _, _, userPaths := buildTopology(userRows, nil, nil, nil, nil, connRows)
-	admin := userPaths["user:admin"]
-	if admin == nil {
-		t.Fatalf("admin path missing")
-	}
-	if v := admin.Nodes["btarget:ads.com"]; v != 4 {
-		t.Errorf("admin blocked target = %d (want 4)", v)
-	}
-	if v := admin.Nodes["out:blocked"]; v != 4 {
-		t.Errorf("admin out:blocked = %d (want 4)", v)
-	}
-}
-
-func TestBuildTopologyProtocolUsesInbound(t *testing.T) {
-	// Same username on both protocols: the user node is the combined per-user
-	// total, while each protocol node comes from the accurate inbound stats.
-	userRows := []userTrafficRow{
-		{Protocol: "vmess", Username: "admin", Uplink: 100, Downlink: 0},
-	}
-	targetRows := []targetTrafficRow{
-		{Protocol: "vmess", Host: "a.com", Status: "warp", Uplink: 100, Downlink: 0},
-	}
-	outboundBytes := map[string]int64{"warp": 100}
-	inboundBytes := map[string]int64{"vmess": 70, "anytls": 30}
-	nodes, _, _, _ := buildTopology(userRows, targetRows, outboundBytes, inboundBytes, nil, nil)
-	byID := map[string]topoNode{}
-	for _, n := range nodes {
-		byID[n.ID] = n
-	}
-	if n := byID["user:admin"]; n.Value != 100 {
-		t.Errorf("user node = %+v (want 100, combined)", n)
-	}
-	if n := byID["proto:vmess"]; n.Value != 70 {
-		t.Errorf("vmess proto = %+v (want 70, inbound)", n)
-	}
-	if n := byID["proto:anytls"]; n.Value != 30 {
-		t.Errorf("anytls proto = %+v (want 30, inbound)", n)
-	}
-}
-
-func TestBuildTopologySkipsUnknownUser(t *testing.T) {
-	userRows := []userTrafficRow{
-		{Protocol: "vmess", Username: "alice", Uplink: 5, Downlink: 5},
-		{Protocol: "vmess", Username: "", Uplink: 3, Downlink: 0},
-	}
-	targetRows := []targetTrafficRow{
-		{Protocol: "vmess", Host: "example.com", Status: "direct", Uplink: 5, Downlink: 5},
-	}
-	outboundBytes := map[string]int64{"direct": 10}
-	nodes, _, totals, userPaths := buildTopology(userRows, targetRows, outboundBytes, nil, nil, nil)
-	if totals["direct"] != 10 {
-		t.Errorf("totals = %+v", totals)
-	}
-	for _, n := range nodes {
-		if n.ID == "user:未知用户" {
-			t.Errorf("unknown user leaked into topology: %+v", n)
-		}
-	}
-	if _, ok := userPaths["user:未知用户"]; ok {
-		t.Errorf("unknown user path should be absent")
+	_, _, _, cells := buildTopology(nil, nil, connRows)
+	if got := sumCells(cells, "count", "user:admin", "", "out:blocked", "btarget:ads.com"); got != 4 {
+		t.Errorf("admin blocked cells = %d (want 4)", got)
 	}
 }
 
 func TestBuildTopologyOtherBuckets(t *testing.T) {
-	var userRows []userTrafficRow
-	var targetRows []targetTrafficRow
-	var connRows []connGraphRow
+	var userTargetRows []userTargetTrafficRow
 	for i := 0; i < 12; i++ {
-		userRows = append(userRows, userTrafficRow{
-			Protocol: "vmess",
+		userTargetRows = append(userTargetRows, userTargetTrafficRow{
 			Username: fmt.Sprintf("u%02d", i),
-			Uplink:   int64(100 - i),
-		})
-		targetRows = append(targetRows, targetTrafficRow{
 			Protocol: "vmess",
 			Host:     fmt.Sprintf("t%02d.com", i),
 			Status:   "direct",
 			Uplink:   int64(100 - i),
 		})
-		connRows = append(connRows, connGraphRow{
-			Username: fmt.Sprintf("u%02d", i),
-			Protocol: "vmess",
-			Status:   "direct",
-			Target:   fmt.Sprintf("t%02d.com:443", i),
-			Count:    1,
-		})
 	}
-	outboundBytes := map[string]int64{"direct": 1200}
-	nodes, links, _, userPaths := buildTopology(userRows, targetRows, outboundBytes, nil, nil, connRows)
+	nodes, links, _, cells := buildTopology(userTargetRows, nil, nil)
 	byID := map[string]topoNode{}
 	for _, n := range nodes {
 		byID[n.ID] = n
@@ -577,7 +505,6 @@ func TestBuildTopologyOtherBuckets(t *testing.T) {
 	if _, ok := byID["target:__other__"]; !ok {
 		t.Errorf("other target node missing")
 	}
-	// other buckets must still receive links
 	var hasOtherUserLink, hasOtherTargetLink bool
 	for _, l := range links {
 		if l.Source == "user:__other__" {
@@ -590,9 +517,8 @@ func TestBuildTopologyOtherBuckets(t *testing.T) {
 	if !hasOtherUserLink || !hasOtherTargetLink {
 		t.Errorf("other buckets missing links: %+v", links)
 	}
-	// the merged user must still have a full path
-	if p := userPaths["user:__other__"]; p == nil || len(p.Links) == 0 {
-		t.Errorf("other user has no path")
+	if got := sumCells(cells, "bytes", "user:__other__", "", "", ""); got == 0 {
+		t.Errorf("other user has no cells")
 	}
 }
 

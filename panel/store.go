@@ -68,6 +68,15 @@ CREATE TABLE IF NOT EXISTS clash_conn (
   down INTEGER NOT NULL DEFAULT 0,
   seen INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS user_outbound_hourly (
+  username TEXT NOT NULL,
+  protocol TEXT NOT NULL,
+  tag TEXT NOT NULL,
+  hour INTEGER NOT NULL,
+  uplink INTEGER NOT NULL DEFAULT 0,
+  downlink INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (username, protocol, tag, hour)
+);
 CREATE TABLE IF NOT EXISTS outbound_hourly (
   tag TEXT NOT NULL,
   hour INTEGER NOT NULL,
@@ -87,6 +96,7 @@ CREATE INDEX IF NOT EXISTS idx_hourly_hour ON hourly(hour);
 CREATE INDEX IF NOT EXISTS idx_target_traffic_hour ON target_traffic(hour);
 CREATE INDEX IF NOT EXISTS idx_user_target_traffic_hour ON user_target_traffic(hour);
 CREATE INDEX IF NOT EXISTS idx_clash_conn_seen ON clash_conn(seen);
+CREATE INDEX IF NOT EXISTS idx_user_outbound_hourly_hour ON user_outbound_hourly(hour);
 CREATE INDEX IF NOT EXISTS idx_outbound_hourly_hour ON outbound_hourly(hour);
 CREATE INDEX IF NOT EXISTS idx_inbound_hourly_hour ON inbound_hourly(hour);
 `
@@ -658,6 +668,56 @@ func (s *store) pruneOutboundTraffic(maxAge time.Duration) {
 	if maxAge > 0 {
 		cutoff := time.Now().Add(-maxAge).Unix()
 		_, _ = s.db.Exec(`DELETE FROM outbound_hourly WHERE hour < ?`, cutoff)
+	}
+}
+
+// userOutboundRow is the exact per-(user, protocol, outbound) traffic, from the
+// custom user_outbound>>> counter.
+type userOutboundRow struct {
+	Username string
+	Protocol string
+	Tag      string
+	Uplink   int64
+	Downlink int64
+}
+
+// addUserOutboundTraffic accumulates exact per-(user, protocol, outbound) bytes.
+func (s *store) addUserOutboundTraffic(username, protocol, tag string, hour, uplink, downlink int64) error {
+	_, err := s.db.Exec(
+		`INSERT INTO user_outbound_hourly (username, protocol, tag, hour, uplink, downlink) VALUES (?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(username, protocol, tag, hour) DO UPDATE SET
+		   uplink = uplink + excluded.uplink,
+		   downlink = downlink + excluded.downlink`,
+		username, protocol, tag, hour, uplink, downlink,
+	)
+	return err
+}
+
+func (s *store) userOutboundTraffic(since int64) ([]userOutboundRow, error) {
+	rows, err := s.db.Query(
+		`SELECT username, protocol, tag, SUM(uplink), SUM(downlink) FROM user_outbound_hourly
+		 WHERE hour >= ? GROUP BY username, protocol, tag`,
+		since,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []userOutboundRow
+	for rows.Next() {
+		var r userOutboundRow
+		if err := rows.Scan(&r.Username, &r.Protocol, &r.Tag, &r.Uplink, &r.Downlink); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *store) pruneUserOutboundTraffic(maxAge time.Duration) {
+	if maxAge > 0 {
+		cutoff := time.Now().Add(-maxAge).Unix()
+		_, _ = s.db.Exec(`DELETE FROM user_outbound_hourly WHERE hour < ?`, cutoff)
 	}
 }
 

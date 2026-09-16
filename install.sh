@@ -22,7 +22,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.9.36"
+shell_version="1.6.9.37"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -4183,9 +4183,10 @@ panel_traffic_reset() {
     systemctl stop panel >/dev/null 2>&1
     # 注意：不清 counters（增量基线），否则下一轮会把累计值当增量写入产生尖峰。
     # 逐表删除并跳过不存在的表（旧版本可能还没有 inbound_hourly / outbound_hourly）。
-    # user_target_traffic 是路由拓扑目标层的数据源，connections 提供封禁目标，都要清。
+    # user_target_traffic 是路由拓扑目标层的数据源，user_outbound_hourly 是出口层数据源，
+    # connections 提供封禁目标，都要清；clash_conn 是轮询基线，不能清（否则会重复计数）。
     local t ok=1
-    for t in hourly totals target_traffic user_target_traffic outbound_hourly inbound_hourly connections; do
+    for t in hourly totals target_traffic user_target_traffic user_outbound_hourly outbound_hourly inbound_hourly connections; do
         if [[ "$(sqlite3 "${panel_db}" "SELECT name FROM sqlite_master WHERE type='table' AND name='${t}';" 2>/dev/null)" == "${t}" ]]; then
             sqlite3 "${panel_db}" "DELETE FROM ${t};" 2>/dev/null || ok=0
         fi

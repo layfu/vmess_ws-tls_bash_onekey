@@ -158,52 +158,36 @@ type topoLink struct {
 	Unit   string `json:"unit"`
 }
 
-// topoPathLink is one link on a user's own route, with the user's value.
-type topoPathLink struct {
-	Index int   `json:"i"`
-	Value int64 `json:"v"`
-}
-
-// topoPath is a single user's route with that user's own traffic at each node
-// and link, so the UI can show a user's flow on hover.
-type topoPath struct {
-	Links []topoPathLink   `json:"links"`
-	Nodes map[string]int64 `json:"nodes"`
+// topoCell is one exact (user, protocol, outbound, target) -> value datum. The
+// frontend recomputes every node/link value as a marginal of these cells under
+// the current hover filter, so hovering any node shows that slice's traffic.
+type topoCell struct {
+	User     string `json:"u"`
+	Protocol string `json:"p"`
+	Outbound string `json:"o"`
+	Target   string `json:"t"`
+	Value    int64  `json:"v"`
+	Unit     string `json:"unit"`
 }
 
 const topoTopN = 10
 
-// topology aggregates recent traffic into a layered routing graph:
-// user -> protocol -> server -> outbound status -> target. User/protocol bytes
-// come from the per-user stats; outbound/target bytes come from the Clash API
-// per-connection stats. User full paths (for hover) come from the connection log.
+// topology returns the layered routing graph (user -> protocol -> server ->
+// outbound -> target) as full marginals plus the exact per-(user, protocol,
+// outbound, target) cells, which the frontend filters on hover. Values come from
+// the connection records, reconciled to the custom user_outbound>>> counter.
 func (a *api) topology(w http.ResponseWriter, r *http.Request) {
 	hours, _ := strconv.Atoi(r.URL.Query().Get("hours"))
 	if hours <= 0 || hours > 24*7 {
 		hours = 24
 	}
 	since := time.Now().Add(-time.Duration(hours) * time.Hour).Unix()
-	userRows, err := a.store.userProtocolTraffic(since)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	targetRows, err := a.store.targetTraffic(since)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
 	userTargetRows, err := a.store.userTargetTraffic(since)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	outboundBytes, err := a.store.outboundTraffic(since)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	inboundBytes, err := a.store.inboundTraffic(since)
+	userOutboundRows, err := a.store.userOutboundTraffic(since)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -213,7 +197,7 @@ func (a *api) topology(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	nodes, links, totals, userPaths := buildTopology(userRows, targetRows, outboundBytes, inboundBytes, userTargetRows, connRows)
+	nodes, links, totals, cells := buildTopology(userTargetRows, userOutboundRows, connRows)
 	if nodes == nil {
 		nodes = []topoNode{}
 	}
@@ -223,104 +207,130 @@ func (a *api) topology(w http.ResponseWriter, r *http.Request) {
 	if totals == nil {
 		totals = map[string]int64{}
 	}
-	if userPaths == nil {
-		userPaths = map[string]*topoPath{}
+	if cells == nil {
+		cells = []topoCell{}
 	}
 	writeJSON(w, map[string]any{
 		"nodes":        nodes,
 		"links":        links,
 		"totals":       totals,
-		"user_paths":   userPaths,
+		"cells":        cells,
 		"window_hours": hours,
 		"updated_at":   time.Now().Unix(),
 	})
 }
 
-// buildTopology turns per-user, per-outbound and per-target traffic into a
-// layered routing graph: user -> protocol -> server -> outbound -> target.
-// Direct/WARP are measured in bytes: the accurate outbound total comes from the
-// v2ray_api outbound stats, and the Clash per-target sample is scaled to match.
-// Blocked is measured in attempts (count). Users/targets beyond the top N are
-// merged into an "其他" node. userPaths maps a user node to its own route with
-// that user's own traffic on each node/link (for hover).
-func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, outboundBytes map[string]int64, inboundBytes map[string]int64, userTargetRows []userTargetTrafficRow, connRows []connGraphRow) ([]topoNode, []topoLink, map[string]int64, map[string]*topoPath) {
-	userBytes := map[string]int64{}
-	protoBytes := map[string]int64{}
-	userProto := map[[2]string]int64{}
-	var total int64
-	for _, r := range userRows {
-		if r.Username == "" {
-			continue
-		}
-		b := r.Uplink + r.Downlink
-		if b == 0 {
-			continue
-		}
-		userBytes[r.Username] += b
-		userProto[[2]string{r.Username, r.Protocol}] += b
-		total += b
-	}
-	// 协议层用 inbound 统计（按协议准确，同名用户跨协议也不会错）；
-	// 没有 inbound 数据的协议回退到用户统计汇总。
-	for p, b := range inboundBytes {
-		protoBytes[p] = b
-	}
-	for pair, b := range userProto {
-		if _, ok := protoBytes[pair[1]]; !ok {
-			protoBytes[pair[1]] += b
-		}
+// buildTopology turns the exact per-connection records into a layered routing
+// graph: user -> protocol -> server -> outbound -> target. Every value is a
+// marginal of the 4-D table ct[user][protocol][outbound][target] (bytes), built
+// from the connection records and reconciled to the exact user_outbound>>>
+// counter for each (user, protocol, outbound) slice. Blocked is a separate
+// dimension measured in attempts (count). Users/targets beyond the top N are
+// merged into an "其他" node. The raw cells are returned so the frontend can
+// recompute the same marginals under any hover filter.
+func buildTopology(userTargetRows []userTargetTrafficRow, userOutboundRows []userOutboundRow, connRows []connGraphRow) ([]topoNode, []topoLink, map[string]int64, []topoCell) {
+	type cellKey struct {
+		user, proto, status, host string
 	}
 
-	// Clash per-status and per (status,host) sample bytes.
-	clashStatus := map[string]int64{}
-	clashOutTarget := map[[2]string]int64{}
-	for _, r := range targetRows {
-		b := r.Uplink + r.Downlink
-		if b == 0 || r.Host == "" {
+	// Raw byte cells from the connection records (blocked excluded).
+	raw := map[cellKey]int64{}
+	for _, r := range userTargetRows {
+		if r.Username == "" || r.Host == "" {
 			continue
 		}
 		status := r.Status
 		if status == "" {
 			status = "unknown"
 		}
-		clashStatus[status] += b
-		clashOutTarget[[2]string{status, r.Host}] += b
-	}
-
-	// Accurate outbound bytes (v2ray_api outbound stats); "block" -> "blocked".
-	outBytes := map[string]int64{}
-	for tag, b := range outboundBytes {
-		status := tag
-		if tag == "block" {
-			status = "blocked"
-		}
-		outBytes[status] += b
-	}
-	if len(outBytes) == 0 { // fall back to the Clash sample
-		for s, b := range clashStatus {
-			outBytes[s] = b
-		}
-	}
-
-	// Direct/WARP: scale the Clash target distribution to the accurate outbound
-	// total. If the outbound stats have no value for a status (e.g. they were
-	// reset), fall back to the raw Clash sample instead of dropping the targets.
-	targetBytes := map[string]int64{}
-	outTarget := map[[2]string]int64{}
-	for pair, b := range clashOutTarget {
-		status, host := pair[0], pair[1]
 		if status == "blocked" {
 			continue
 		}
-		scaled := scaleToOutbound(b, clashStatus[status], outBytes[status])
-		if scaled <= 0 {
+		b := r.Uplink + r.Downlink
+		if b == 0 {
 			continue
 		}
-		targetBytes[host] += scaled
-		outTarget[pair] += scaled
+		raw[cellKey{r.Username, r.Protocol, status, r.Host}] += b
+	}
+	sliceRaw := map[[3]string]int64{}
+	for k, v := range raw {
+		sliceRaw[[3]string{k.user, k.proto, k.status}] += v
 	}
 
-	// Blocked: attempts per target from the connection log.
+	// Exact per-(user, protocol, outbound) totals from the custom counter.
+	sliceExact := map[[3]string]int64{}
+	for _, r := range userOutboundRows {
+		if r.Username == "" {
+			continue
+		}
+		status := r.Tag
+		if status == "block" {
+			status = "blocked"
+		}
+		if status == "blocked" {
+			continue
+		}
+		sliceExact[[3]string{r.Username, r.Protocol, status}] += r.Uplink + r.Downlink
+	}
+
+	// Reconcile each slice to its exact total. Slices with exact bytes but no
+	// records are attributed to an unknown target so the outbound still shows.
+	cells4 := map[cellKey]int64{}
+	for k, v := range raw {
+		sk := [3]string{k.user, k.proto, k.status}
+		total := sliceExact[sk]
+		if total <= 0 {
+			total = sliceRaw[sk]
+		}
+		if total <= 0 {
+			continue
+		}
+		if scaled := v * total / sliceRaw[sk]; scaled > 0 {
+			cells4[k] = scaled
+		}
+	}
+	for sk, total := range sliceExact {
+		if sliceRaw[sk] > 0 || total <= 0 {
+			continue
+		}
+		cells4[cellKey{sk[0], sk[1], sk[2], ""}] += total
+	}
+
+	userBytes := map[string]int64{}
+	hostBytes := map[string]int64{}
+	for k, v := range cells4 {
+		userBytes[k.user] += v
+		hostBytes[k.host] += v
+	}
+	// Rank users by bytes plus blocked attempts so blocked-only users keep a node.
+	userRank := map[string]int64{}
+	for name, b := range userBytes {
+		userRank[name] = b
+	}
+	for _, r := range connRows {
+		if r.Status == "blocked" && r.Username != "" {
+			userRank[baseUserName(r.Username)] += r.Count
+		}
+	}
+	keepUsers := topKeys(userRank, topoTopN)
+	keepTargets := topKeys(hostBytes, topoTopN)
+	userKey := func(name string) string {
+		if keepUsers[name] {
+			return "user:" + name
+		}
+		return "user:__other__"
+	}
+	targetKey := func(name string) string {
+		if name == "" {
+			return "target:未知目标"
+		}
+		if keepTargets[name] {
+			return "target:" + name
+		}
+		return "target:__other__"
+	}
+
+	// Blocked attempts (count) from the connection log.
 	blockedCounts := map[string]int64{}
 	var blockedTotal int64
 	for _, r := range connRows {
@@ -334,37 +344,7 @@ func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, out
 		blockedCounts[host] += r.Count
 		blockedTotal += r.Count
 	}
-
-	var statusTotal int64
-	for s, b := range outBytes {
-		if s == "blocked" {
-			continue
-		}
-		statusTotal += b
-	}
-	if total == 0 && statusTotal == 0 && blockedTotal == 0 {
-		return nil, nil, nil, nil
-	}
-	serverBytes := total
-	if serverBytes == 0 {
-		serverBytes = statusTotal
-	}
-
-	keepUsers := topKeys(userBytes, topoTopN)
-	keepTargets := topKeys(targetBytes, topoTopN)
 	keepBlocked := topKeys(blockedCounts, topoTopN)
-	userKey := func(name string) string {
-		if keepUsers[name] {
-			return "user:" + name
-		}
-		return "user:__other__"
-	}
-	targetKey := func(name string) string {
-		if keepTargets[name] {
-			return "target:" + name
-		}
-		return "target:__other__"
-	}
 	blockedKey := func(name string) string {
 		if keepBlocked[name] {
 			return "btarget:" + name
@@ -372,8 +352,7 @@ func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, out
 		return "btarget:__other__"
 	}
 
-	nodes := make([]topoNode, 0)
-
+	// Node marginals.
 	userNodeBytes := map[string]int64{}
 	userLabel := map[string]string{}
 	for name, b := range userBytes {
@@ -387,6 +366,37 @@ func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, out
 			}
 		}
 	}
+	protoBytes := map[string]int64{}
+	outBytes := map[string]int64{}
+	for k, v := range cells4 {
+		protoBytes[k.proto] += v
+		outBytes[k.status] += v
+	}
+	targetNodeBytes := map[string]int64{}
+	targetLabel := map[string]string{}
+	for host, b := range hostBytes {
+		id := targetKey(host)
+		targetNodeBytes[id] += b
+		if _, ok := targetLabel[id]; !ok {
+			switch id {
+			case "target:__other__":
+				targetLabel[id] = "其他"
+			case "target:未知目标":
+				targetLabel[id] = "未知目标"
+			default:
+				targetLabel[id] = host
+			}
+		}
+	}
+	var serverBytes int64
+	for _, b := range userNodeBytes {
+		serverBytes += b
+	}
+	if serverBytes == 0 && blockedTotal == 0 {
+		return nil, nil, nil, nil
+	}
+
+	nodes := make([]topoNode, 0)
 	for id, b := range userNodeBytes {
 		nodes = append(nodes, topoNode{ID: id, Label: userLabel[id], Kind: "user", Value: b, Unit: "bytes"})
 	}
@@ -395,27 +405,10 @@ func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, out
 	}
 	nodes = append(nodes, topoNode{ID: "srv", Label: "服务器", Kind: "server", Value: serverBytes, Unit: "bytes"})
 	for s, b := range outBytes {
-		if s == "blocked" {
-			continue
-		}
 		nodes = append(nodes, topoNode{ID: "out:" + s, Label: statusLabel(s), Kind: s, Value: b, Unit: "bytes"})
 	}
 	if blockedTotal > 0 {
 		nodes = append(nodes, topoNode{ID: "out:blocked", Label: statusLabel("blocked"), Kind: "blocked", Value: blockedTotal, Unit: "count"})
-	}
-
-	targetNodeBytes := map[string]int64{}
-	targetLabel := map[string]string{}
-	for name, b := range targetBytes {
-		id := targetKey(name)
-		targetNodeBytes[id] += b
-		if _, ok := targetLabel[id]; !ok {
-			if id == "target:__other__" {
-				targetLabel[id] = "其他"
-			} else {
-				targetLabel[id] = name
-			}
-		}
 	}
 	for id, b := range targetNodeBytes {
 		nodes = append(nodes, topoNode{ID: id, Label: targetLabel[id], Kind: "target", Value: b, Unit: "bytes"})
@@ -437,6 +430,7 @@ func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, out
 		nodes = append(nodes, topoNode{ID: id, Label: blockedLabel[id], Kind: "target", Value: c, Unit: "count"})
 	}
 
+	// Link marginals.
 	links := make([]topoLink, 0)
 	addLink := func(src, dst, status string, v int64, unit string) {
 		if v <= 0 {
@@ -444,23 +438,26 @@ func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, out
 		}
 		links = append(links, topoLink{Source: src, Target: dst, Status: status, Value: v, Unit: unit})
 	}
-	for pair, b := range userProto {
-		addLink(userKey(pair[0]), "proto:"+pair[1], "", b, "bytes")
+	userProtoBytes := map[[2]string]int64{}
+	outTargetBytes := map[[2]string]int64{}
+	for k, v := range cells4 {
+		userProtoBytes[[2]string{userKey(k.user), "proto:" + k.proto}] += v
+		outTargetBytes[[2]string{"out:" + k.status, targetKey(k.host)}] += v
+	}
+	for pair, b := range userProtoBytes {
+		addLink(pair[0], pair[1], "", b, "bytes")
 	}
 	for p, b := range protoBytes {
 		addLink("proto:"+p, "srv", "", b, "bytes")
 	}
 	for s, b := range outBytes {
-		if s == "blocked" {
-			continue
-		}
 		addLink("srv", "out:"+s, s, b, "bytes")
+	}
+	for pair, b := range outTargetBytes {
+		addLink(pair[0], pair[1], strings.TrimPrefix(pair[0], "out:"), b, "bytes")
 	}
 	if blockedTotal > 0 {
 		addLink("srv", "out:blocked", "blocked", blockedTotal, "count")
-	}
-	for pair, b := range outTarget {
-		addLink("out:"+pair[0], targetKey(pair[1]), pair[0], b, "bytes")
 	}
 	for name, c := range blockedCounts {
 		addLink("out:blocked", blockedKey(name), "blocked", c, "count")
@@ -486,47 +483,21 @@ func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, out
 		return links[i].Status < links[j].Status
 	})
 
-	// Map (source,target) to link index for the per-user hover paths.
-	linkIndex := make(map[[2]string]int, len(links))
-	for i, l := range links {
-		linkIndex[[2]string{l.Source, l.Target}] = i
+	// Cells for the frontend hover filter (byte cells + blocked count cells).
+	cells := make([]topoCell, 0, len(cells4))
+	for k, v := range cells4 {
+		if v <= 0 {
+			continue
+		}
+		cells = append(cells, topoCell{
+			User:     userKey(k.user),
+			Protocol: "proto:" + k.proto,
+			Outbound: "out:" + k.status,
+			Target:   targetKey(k.host),
+			Value:    v,
+			Unit:     "bytes",
+		})
 	}
-
-	// Per-user route with values, so hovering a user shows that user's own
-	// traffic on every segment. user/protocol come from the namespaced per-user
-	// stats; outbound/target come from the Clash API, which the build patches to
-	// expose the authenticated user on each connection.
-	//
-	// The Clash sample undercounts (short connections are missed), so the target
-	// layer is scaled up to the accurate outbound total. Apply the same
-	// per-status factor here, otherwise a user's value could exceed the aggregate
-	// it is part of.
-	userOut := map[[2]string]int64{}    // (userKey, status) -> bytes
-	userTarget := map[[3]string]int64{} // (userKey, status, host) -> bytes
-	for _, r := range userTargetRows {
-		if r.Username == "" || r.Host == "" {
-			continue
-		}
-		b := r.Uplink + r.Downlink
-		if b == 0 {
-			continue
-		}
-		status := r.Status
-		if status == "" {
-			status = "unknown"
-		}
-		if status == "blocked" {
-			continue
-		}
-		scaled := scaleToOutbound(b, clashStatus[status], outBytes[status])
-		if scaled <= 0 {
-			continue
-		}
-		uk := userKey(r.Username)
-		userOut[[2]string{uk, status}] += scaled
-		userTarget[[3]string{uk, status, r.Host}] += scaled
-	}
-	userBlocked := map[[2]string]int64{} // (userKey, host) -> attempts
 	for _, r := range connRows {
 		if r.Username == "" || r.Status != "blocked" {
 			continue
@@ -535,84 +506,25 @@ func buildTopology(userRows []userTrafficRow, targetRows []targetTrafficRow, out
 		if host == "" {
 			continue
 		}
-		userBlocked[[2]string{userKey(baseUserName(r.Username)), host}] += r.Count
-	}
-
-	userPaths := map[string]*topoPath{}
-	pathFor := func(uk string) *topoPath {
-		p := userPaths[uk]
-		if p == nil {
-			p = &topoPath{Nodes: map[string]int64{}}
-			userPaths[uk] = p
-		}
-		return p
-	}
-	addPathLink := func(p *topoPath, key [2]string, v int64) {
-		if i, ok := linkIndex[key]; ok && v > 0 {
-			p.Links = append(p.Links, topoPathLink{Index: i, Value: v})
-		}
-	}
-	for uk, total := range userNodeBytes {
-		p := pathFor(uk)
-		p.Nodes[uk] = total
-		p.Nodes["srv"] = total
-	}
-	for pair, b := range userProto {
-		uk, proto := userKey(pair[0]), pair[1]
-		p := pathFor(uk)
-		p.Nodes["proto:"+proto] = b
-		addPathLink(p, [2]string{uk, "proto:" + proto}, b)
-		addPathLink(p, [2]string{"proto:" + proto, "srv"}, b)
-	}
-	for pair, b := range userOut {
-		uk, status := pair[0], pair[1]
-		p := pathFor(uk)
-		p.Nodes["out:"+status] = b
-		addPathLink(p, [2]string{"srv", "out:" + status}, b)
-	}
-	for pair, b := range userTarget {
-		uk, status, host := pair[0], pair[1], pair[2]
-		p := pathFor(uk)
-		tk := targetKey(host)
-		p.Nodes[tk] = b
-		addPathLink(p, [2]string{"out:" + status, tk}, b)
-	}
-	for pair, c := range userBlocked {
-		uk, host := pair[0], pair[1]
-		p := pathFor(uk)
-		tk := blockedKey(host)
-		p.Nodes[tk] = c
-		p.Nodes["out:blocked"] += c
-		addPathLink(p, [2]string{"srv", "out:blocked"}, c)
-		addPathLink(p, [2]string{"out:blocked", tk}, c)
+		cells = append(cells, topoCell{
+			User:     userKey(baseUserName(r.Username)),
+			Protocol: "proto:" + r.Protocol,
+			Outbound: "out:blocked",
+			Target:   blockedKey(host),
+			Value:    r.Count,
+			Unit:     "count",
+		})
 	}
 
 	totals := map[string]int64{}
 	for s, b := range outBytes {
-		if s == "blocked" {
-			continue
-		}
 		totals[s] = b
 	}
 	if blockedTotal > 0 {
 		totals["blocked"] = blockedTotal
 	}
 
-	return nodes, links, totals, userPaths
-}
-
-// scaleToOutbound scales a Clash sample (sample) up to the accurate outbound
-// total (total) using the Clash status total (denom) as the denominator. When
-// the outbound total or the denominator is unavailable, the raw sample is
-// returned so callers never drop data they actually have.
-func scaleToOutbound(sample, denom, total int64) int64 {
-	if sample <= 0 {
-		return 0
-	}
-	if denom > 0 && total > 0 {
-		return sample * total / denom
-	}
-	return sample
+	return nodes, links, totals, cells
 }
 
 // topoLayer maps a node kind to its column: user=0, protocol=1, server=2,

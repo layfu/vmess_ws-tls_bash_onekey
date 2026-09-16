@@ -140,6 +140,7 @@ func (c *collector) poll(ctx context.Context) {
 			}
 			_ = c.store.saveCounter(ps.protocol, user, "up", up)
 			_ = c.store.saveCounter(ps.protocol, user, "down", down)
+			c.collectUserOutbound(counters, ps.protocol, user, statUser, now)
 		}
 		if ps.readOutbound {
 			c.collectOutbound(counters, now)
@@ -179,6 +180,42 @@ func (c *collector) collectOutbound(counters map[string]int64, now time.Time) {
 		}
 		_ = c.store.saveCounter("outbound", tag, "up", up)
 		_ = c.store.saveCounter("outbound", tag, "down", down)
+	}
+}
+
+// collectUserOutbound records the exact per-(user, protocol, outbound) byte
+// deltas from the custom user_outbound>>> counter. On binaries without the
+// patch the counter is absent, so every delta is zero and nothing is stored.
+func (c *collector) collectUserOutbound(counters map[string]int64, protocol, user, statUser string, now time.Time) {
+	hour := now.Truncate(time.Hour).Unix()
+	for _, tag := range outboundTags {
+		prefix := "user_outbound>>>" + statUser + ">>>" + tag + ">>>traffic>>>"
+		up := counters[prefix+"uplink"]
+		down := counters[prefix+"downlink"]
+		c.mu.Lock()
+		lastUp := c.counters["user_outbound|"+protocol+"|"+user+"|"+tag+"|up"]
+		lastDown := c.counters["user_outbound|"+protocol+"|"+user+"|"+tag+"|down"]
+		dUp := up - lastUp
+		dDown := down - lastDown
+		if dUp < 0 {
+			dUp = up
+		}
+		if dDown < 0 {
+			dDown = down
+		}
+		c.counters["user_outbound|"+protocol+"|"+user+"|"+tag+"|up"] = up
+		c.counters["user_outbound|"+protocol+"|"+user+"|"+tag+"|down"] = down
+		c.mu.Unlock()
+		if dUp == 0 && dDown == 0 {
+			continue
+		}
+		status := tag
+		if tag == "block" {
+			status = "blocked"
+		}
+		if err := c.store.addUserOutboundTraffic(user, protocol, status, hour, dUp, dDown); err != nil {
+			log.Printf("store addUserOutboundTraffic: %v", err)
+		}
 	}
 }
 

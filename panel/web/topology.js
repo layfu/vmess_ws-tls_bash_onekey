@@ -39,15 +39,16 @@
 
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  let data = { nodes: [], links: [], totals: {}, user_paths: {} };
+  let data = { nodes: [], links: [], totals: {}, cells: [] };
   let structureKey = '';
   let nodeEls = new Map();
   let edgeEls = new Map();
   let edgeList = [];
   let nodeCenter = new Map();
-  let adjacency = new Map();
-  let userPaths = {};
-  let userHover = null;
+  let nodeById = new Map();
+  let cells = [];
+  let hoverFilter = null;
+  let hoverMinLayer = 0;
   let hovered = null;
   let hiddenByTab = document.hidden;
   let offscreen = false;
@@ -69,6 +70,39 @@
     if (kind === 'server') return 2;
     if (kind === 'target') return 4;
     return 3;
+  }
+
+  // 节点 id → 维度（用于在 cells 上做过滤/边际求和）。
+  function dimOf(id) {
+    if (id === 'srv') return '';
+    if (id.indexOf('user:') === 0) return 'u';
+    if (id.indexOf('proto:') === 0) return 'p';
+    if (id.indexOf('out:') === 0) return 'o';
+    return 't';
+  }
+
+  // 一条边对应的维度与维度取值：取目标端的维度，目标端是服务器时取源端。
+  function linkDim(l) {
+    const td = dimOf(l.target);
+    return td || dimOf(l.source);
+  }
+
+  function linkDimId(l) {
+    return dimOf(l.target) ? l.target : l.source;
+  }
+
+  // 在 cells 上求边际：filter 是 {维度: 节点id}，dim/id 固定当前节点自身维度。
+  function sliceSum(filter, dim, id, unit) {
+    let sum = 0;
+    for (const c of cells) {
+      if (unit && c.unit !== unit) continue;
+      let ok = true;
+      for (const d in filter) {
+        if (filter[d] && c[d] !== filter[d]) { ok = false; break; }
+      }
+      if (ok && (!dim || c[dim] === id)) sum += c.v;
+    }
+    return sum;
   }
 
   function nodeColor(kind) {
@@ -164,22 +198,9 @@
     nodeEls = new Map();
     edgeEls = new Map();
     edgeList = [];
-    adjacency = new Map();
-    userHover = null;
+    hoverFilter = null;
+    hoverMinLayer = 0;
     hovered = null;
-  }
-
-  function buildAdjacency() {
-    adjacency = new Map();
-    for (const n of data.nodes) adjacency.set(n.id, new Set());
-    for (const l of data.links) {
-      const a = adjacency.get(l.source);
-      const b = adjacency.get(l.target);
-      if (a && b) {
-        a.add(l.target);
-        b.add(l.source);
-      }
-    }
   }
 
   function buildNodes() {
@@ -209,7 +230,7 @@
       el.appendChild(label);
       el.appendChild(count);
 
-      el.addEventListener('mouseenter', () => highlight(n.id, n.kind === 'user'));
+      el.addEventListener('mouseenter', () => highlight(n.id));
       el.addEventListener('mouseleave', clearHighlight);
       nodesEl.appendChild(el);
       nodeEls.set(n.id, el);
@@ -283,7 +304,7 @@
       g.appendChild(track);
       g.appendChild(line);
 
-      const entry = { g, track, d, color, dots: null };
+      const entry = { g, track, d, color, dots: null, unit: l.unit || 'bytes' };
       if (!reducedMotion && shouldAnimate(l, maxBytes, maxCount)) {
         entry.dots = addParticles(g, d, color);
       }
@@ -319,98 +340,82 @@
     }
   }
 
-  // 悬停用户时，把该用户路径上的节点数值与连线粗细换成"该用户自己"的流量，
-  // 让每条链路的数值都对应这个人，而不是全体合计。
-  function applyUserValues() {
-    if (!userHover) return;
+  // 悬停某个节点时，用该节点的维度作为过滤条件，在 cells 上重新求每个节点/连线的
+  // 边际和：悬停节点本身 + 其下游（层号更大且该切片下数值 > 0）激活，其余（含同层
+  // 兄弟节点与所有上游）置灰。不悬停时显示全量边际。
+  function applyFilter(filter, minLayer) {
+    const nodeActive = new Set();
+    for (const [nid, el] of nodeEls) {
+      const n = nodeById.get(nid);
+      if (!n) continue;
+      const v = sliceSum(filter, dimOf(nid), nid, n.unit);
+      const active = nid === hovered || (layerOf(n.kind) > minLayer && v > 0);
+      if (active) nodeActive.add(nid);
+      el.classList.toggle('dim', !active);
+      const c = el.querySelector('.topo-node-count');
+      if (c) c.textContent = fmtValue(v, n.unit);
+    }
+    const linkVals = new Map();
     let maxBytes = 1;
     let maxCount = 1;
-    for (const [i, v] of userHover.links) {
+    for (let i = 0; i < data.links.length; i++) {
       const l = data.links[i];
-      if (!l) continue;
+      if (!nodeActive.has(l.source) || !nodeActive.has(l.target)) continue;
+      const v = sliceSum(filter, linkDim(l), linkDimId(l), l.unit || 'bytes');
+      if (v <= 0) continue;
+      linkVals.set(i, v);
       if ((l.unit || 'bytes') === 'count') {
         if (v > maxCount) maxCount = v;
       } else if (v > maxBytes) {
         maxBytes = v;
       }
     }
-    for (const [i, v] of userHover.links) {
-      const l = data.links[i];
+    for (let i = 0; i < data.links.length; i++) {
       const e = edgeList[i];
-      if (!l || !e) continue;
+      if (!e) continue;
+      const active = linkVals.has(i);
+      e.g.classList.toggle('dim', !active);
+      if (!active) continue;
+      const l = data.links[i];
       const max = (l.unit || 'bytes') === 'count' ? maxCount : maxBytes;
-      e.track.setAttribute('stroke-width', String(1 + Math.min(1, v / Math.max(max, 1)) * 5 + 6));
-    }
-    for (const [nid, v] of userHover.nodes) {
-      const el = nodeEls.get(nid);
-      if (!el) continue;
-      const c = el.querySelector('.topo-node-count');
-      if (c) c.textContent = fmtValue(v, el.dataset.unit);
+      e.track.setAttribute('stroke-width', String(1 + Math.min(1, linkVals.get(i) / Math.max(max, 1)) * 5 + 6));
     }
   }
 
-  function clearUserValues() {
-    userHover = null;
+  function clearFilter() {
+    hoverFilter = null;
     const maxBytes = unitMax(data.links, 'bytes');
     const maxCount = unitMax(data.links, 'count');
     for (const n of data.nodes) {
       const el = nodeEls.get(n.id);
       if (!el) continue;
+      el.classList.remove('dim');
       const c = el.querySelector('.topo-node-count');
       if (c) c.textContent = fmtValue(n.value, n.unit);
     }
     for (let i = 0; i < data.links.length; i++) {
       const e = edgeList[i];
-      if (e) e.track.setAttribute('stroke-width', String(edgeWidth(data.links[i], maxBytes, maxCount) + 6));
+      if (!e) continue;
+      e.g.classList.remove('dim');
+      e.track.setAttribute('stroke-width', String(edgeWidth(data.links[i], maxBytes, maxCount) + 6));
     }
   }
 
-  function highlight(id, isUser) {
+  function highlight(id) {
     if (hovered === id) return;
     hovered = id;
-    const activeNodes = new Set([id]);
-    const activeEdges = new Set();
-    const path = isUser ? userPaths[id] : null;
-    let links = null;
-    let nodes = null;
-    if (path && path.links && path.links.length) {
-      links = new Map();
-      for (const pl of path.links) {
-        activeEdges.add(pl.i);
-        links.set(pl.i, pl.v);
-        const l = data.links[pl.i];
-        if (l) {
-          activeNodes.add(l.source);
-          activeNodes.add(l.target);
-        }
-      }
-      nodes = new Map(Object.entries(path.nodes || {}));
-    } else {
-      const nbrs = adjacency.get(id) || new Set();
-      for (const nb of nbrs) activeNodes.add(nb);
-      for (let i = 0; i < data.links.length; i++) {
-        const l = data.links[i];
-        if (l.source === id || l.target === id) activeEdges.add(i);
-      }
-    }
-    for (const [nid, el] of nodeEls) el.classList.toggle('dim', !activeNodes.has(nid));
-    for (let i = 0; i < edgeList.length; i++) {
-      const e = edgeList[i];
-      if (e) e.g.classList.toggle('dim', !activeEdges.has(i));
-    }
-    if (links) {
-      userHover = { links, nodes };
-      applyUserValues();
-    } else if (userHover) {
-      clearUserValues();
-    }
+    const n = nodeById.get(id);
+    if (!n) return;
+    hoverMinLayer = layerOf(n.kind);
+    hoverFilter = {};
+    const d = dimOf(id);
+    if (d) hoverFilter[d] = id;
+    applyFilter(hoverFilter, hoverMinLayer);
   }
 
   function clearHighlight() {
     hovered = null;
-    for (const el of nodeEls.values()) el.classList.remove('dim');
-    for (const e of edgeEls.values()) e.g.classList.remove('dim');
-    if (userHover) clearUserValues();
+    clearFilter();
   }
 
   function renderSummary() {
@@ -422,7 +427,9 @@
   function render() {
     const nodes = data.nodes || [];
     const links = data.links || [];
-    userPaths = data.user_paths || {};
+    cells = data.cells || [];
+    nodeById = new Map();
+    for (const n of nodes) nodeById.set(n.id, n);
     if (!nodes.length) {
       clearStage();
       structureKey = '';
@@ -439,12 +446,11 @@
       structureKey = key;
       clearStage();
       layout();
-      buildAdjacency();
       buildNodes();
       buildEdges();
     } else {
       updateInPlace();
-      if (userHover) applyUserValues();
+      if (hoverFilter) applyFilter(hoverFilter, hoverMinLayer);
     }
     renderSummary();
     applyPause();
@@ -452,7 +458,7 @@
 
   window.PanelTopology = {
     update(next) {
-      data = next || { nodes: [], links: [], totals: {}, user_paths: {} };
+      data = next || { nodes: [], links: [], totals: {}, cells: [] };
       render();
     },
   };
