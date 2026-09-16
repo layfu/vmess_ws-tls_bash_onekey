@@ -1,4 +1,5 @@
 ## 2026-09-16
+* 修复 VMess 迁移后连接失败：install.sh 中存在两个 `v2ray_conf_add` 定义，后定义的老 v2ray 版本覆盖了新别名，导致配置写到 v2ray 而非 sing-box、`/etc/sing-box/config.json` 未生成、Nginx 反代到无进程的端口。已删除重复定义（脚本 1.6.9.25）
 * **重大变更**：VMess (ws+tls) 后端由 v2ray 迁移到 sing-box（仅新装）。Nginx 继续终止 TLS 并把 WS 反代到 sing-box 的 `vmess-in`；VMess 与 AnyTLS 共用同一个 sing-box 实例、同一套路由与统计；客户端链接不变（面板 2.0.0）
 * 面板：VMess 流量统计改由 sing-box 的 v2ray_api 提供，连接日志与来源 IP 关联改由 sing-box 日志 + Nginx WS 日志完成；新增 Clash API 轮询（`/connections`）按「目标 + 出口」累加字节
 * 路由拓扑改为**按流量（字节）**而非连接数：用户/协议层用每用户统计字节，出口/目标层用 Clash API 每连接字节；节点大小、边宽、粒子门槛均按流量，避免广告/分析接口的连接数干扰

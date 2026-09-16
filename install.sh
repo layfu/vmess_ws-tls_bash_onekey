@@ -22,7 +22,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.9.24"
+shell_version="1.6.9.25"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -2634,101 +2634,8 @@ routing_menu() {
     done
 }
 
-v2ray_conf_add() {
-    vmess_users_ensure
-    local clients_json="" name uuid first=1
-    while read -r name uuid; do
-        [[ -z "${name}" ]] && continue
-        if [[ ${first} -eq 1 ]]; then first=0; else clients_json="${clients_json},"; fi
-        clients_json="${clients_json}{\"id\":\"${uuid}\",\"alterId\":0,\"email\":\"${name}\"}"
-    done <"${vmess_users_file}"
-    [[ -z "${clients_json}" ]] && clients_json="{\"id\":\"$(cat /proc/sys/kernel/random/uuid)\",\"alterId\":0,\"email\":\"vmess\"}"
-
-    local ws_path="${camouflage}"
-    [[ -f "${v2ray_qr_config_file}" ]] && ws_path="$(grep '\"path\"' "${v2ray_qr_config_file}" | awk -F '"' '{print $4}')"
-    camouflage="${ws_path}"
-
-    local inbound_port=""
-    if [[ -f "${v2ray_conf}" ]]; then
-        inbound_port="$(grep '\"port\"' "${v2ray_conf}" | head -1 | awk -F ':' '{print $2}' | tr -d ' ,')"
-    fi
-    [[ -z "${inbound_port}" ]] && inbound_port=$((RANDOM + 10000))
-    PORT="${inbound_port}"
-
-    routing_load
-    local routing_rules_json routing_ds sniffing_json
-    routing_rules_json="$(routing_rules_gen)"
-    routing_ds="$(routing_domain_strategy)"
-    sniffing_json="$(routing_sniffing_gen)"
-
-    local stats_json="" policy_json="" api_obj="" api_inbound=""
-    if panel_installed; then
-        stats_json='"stats": {},'
-        policy_json='"policy": { "levels": { "0": { "statsUserUplink": true, "statsUserDownlink": true } } },'
-        api_obj='"api": { "tag": "api", "services": ["StatsService"] },'
-        api_inbound=', { "listen": "127.0.0.1", "port": '"${panel_v2ray_api_port}"', "protocol": "dokodemo-door", "settings": { "address": "127.0.0.1" }, "tag": "api" }'
-        if [[ -n "${routing_rules_json}" ]]; then
-            routing_rules_json="{ \"type\": \"field\", \"inboundTag\": [\"api\"], \"outboundTag\": \"api\" },${routing_rules_json}"
-        else
-            routing_rules_json="{ \"type\": \"field\", \"inboundTag\": [\"api\"], \"outboundTag\": \"api\" }"
-        fi
-    fi
-
-    cat >${v2ray_conf} <<EOF
-{
-  ${stats_json}
-  ${policy_json}
-  ${api_obj}
-  "log": {
-    "access": "/var/log/v2ray/access.log",
-    "error": "/var/log/v2ray/error.log",
-    "loglevel": "warning"
-  },
-  "inbounds": [
-    {
-      "port": ${PORT},
-      "listen": "127.0.0.1",
-      "tag": "vmess-in",
-      "protocol": "vmess",
-      "settings": {
-        "clients": [
-          ${clients_json}
-        ]
-      },
-${sniffing_json}
-      "streamSettings": {
-        "network": "ws",
-        "wsSettings": {
-          "path": "${camouflage}"
-        }
-      }
-    }${api_inbound}
-  ],
-  "outbounds": [
-    { "protocol": "freedom", "settings": {}, "tag": "direct" },
-    { "protocol": "blackhole", "settings": {}, "tag": "blocked" },
-    { "protocol": "socks", "settings": { "servers": [{ "address": "127.0.0.1", "port": ${warp_socks_port} }] }, "tag": "warp" }
-  ],
-  "dns": {
-    "servers": [
-      "https+local://1.1.1.1/dns-query",
-      "1.1.1.1",
-      "1.0.0.1",
-      "8.8.8.8",
-      "8.8.4.4",
-      "localhost"
-    ]
-  },
-  "routing": {
-    "domainStrategy": "${routing_ds}",
-    "rules": [
-      ${routing_rules_json}
-    ]
-  }
-}
-EOF
-    judge "V2Ray 配置写入"
-}
+# 原 v2ray_conf_add 已删除：VMess 现由 sing-box 承载，
+# v2ray_conf_add 是 singbox_conf_add 的别名（见文件上方定义）。
 
 old_config_exist_check() {
     if [[ -f $v2ray_qr_config_file ]]; then
