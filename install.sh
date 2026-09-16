@@ -22,7 +22,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.9.29"
+shell_version="1.6.9.30"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -4109,6 +4109,44 @@ cert_menu() {
     done
 }
 
+panel_traffic_reset() {
+    if ! panel_installed; then
+        echo -e "${Error} ${RedBG} 面板未安装 ${Font}"
+        return 1
+    fi
+    echo -e "${Red} 将清空全部流量统计（趋势 / 当月 / 累计 / 历史统计 / 路由拓扑），此操作不可恢复 ${Font}"
+    read -rp "确认清空? [y/N]: " confirm
+    case "${confirm}" in
+    [yY][eE][sS] | [yY]) ;;
+    *)
+        echo -e "${OK} ${GreenBG} 已取消 ${Font}"
+        return 0
+        ;;
+    esac
+    if ! command -v sqlite3 >/dev/null 2>&1; then
+        echo -e "${OK} ${GreenBG} 正在安装 sqlite3 ... ${Font}"
+        if command -v apt-get >/dev/null 2>&1; then
+            apt-get install -y -qq sqlite3 >/dev/null 2>&1
+        elif command -v yum >/dev/null 2>&1; then
+            yum install -y -q sqlite >/dev/null 2>&1
+        fi
+    fi
+    if ! command -v sqlite3 >/dev/null 2>&1; then
+        echo -e "${Error} ${RedBG} sqlite3 不可用，请手动安装后重试 ${Font}"
+        return 1
+    fi
+    systemctl stop panel >/dev/null 2>&1
+    # 注意：不清 counters（增量基线），否则下一轮会把累计值当增量写入产生尖峰。
+    if sqlite3 "${panel_db}" \
+        "DELETE FROM hourly; DELETE FROM totals; DELETE FROM target_traffic; DELETE FROM outbound_hourly;"; then
+        systemctl start panel >/dev/null 2>&1
+        echo -e "${OK} ${GreenBG} 已清空流量统计，面板已重启（数值从此刻重新累积） ${Font}"
+    else
+        systemctl start panel >/dev/null 2>&1
+        echo -e "${Error} ${RedBG} 清空失败，请检查 ${panel_db} ${Font}"
+    fi
+}
+
 other_menu() {
     while true; do
         clear_screen
@@ -4119,6 +4157,7 @@ other_menu() {
         echo -e "${Green}4.${Font} 升级 脚本"
         echo -e "${Green}5.${Font} 修改 面板密码"
         echo -e "${Green}6.${Font} 更新 IP 归属地数据库"
+        echo -e "${Green}7.${Font} 清空流量统计"
         echo -e "${Green}0.${Font} 返回上级菜单 \n"
         read -rp "请输入数字：" sub_num
         case ${sub_num} in
@@ -4146,6 +4185,9 @@ other_menu() {
             ;;
         6)
             panel_geo_update
+            ;;
+        7)
+            panel_traffic_reset
             ;;
         0)
             break
