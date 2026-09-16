@@ -22,7 +22,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.9.25"
+shell_version="1.6.9.26"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -3034,8 +3034,29 @@ uninstall_all() {
 
         esac
     fi
+    if [[ -s "${vmess_users_file}" || -f "${v2ray_qr_config_file}" ]]; then
+        echo -e "${OK} ${Green} 是否卸载 VMess [Y/N]? ${Font}"
+        read -r uninstall_vmess
+        case $uninstall_vmess in
+        [yY][eE][sS] | [yY])
+            rm -f "${vmess_users_file}"
+            rm -f "${v2ray_qr_config_file}"
+            rm -f "${v2ray_info_file}"
+            rm -f "${singbox_vmess_port_file}"
+            # 若还装有 AnyTLS，重生成 sing-box 配置（去掉 vmess-in）并重启
+            if [[ -s "${anytls_users_file}" && -f "${singbox_conf}" ]]; then
+                anytls_conf_add
+                [[ -f "${singbox_systemd_file}" ]] && systemctl restart sing-box >/dev/null 2>&1
+            fi
+            uninstalled_any=1
+            echo -e "${OK} ${Green} 已卸载 VMess ${Font}"
+            ;;
+        *) ;;
+
+        esac
+    fi
     if [[ -f ${singbox_bin_dir} || -d ${singbox_conf_dir} || -f ${singbox_systemd_file} ]]; then
-        echo -e "${OK} ${Green} 是否卸载 sing-box (AnyTLS) [Y/N]? ${Font}"
+        echo -e "${OK} ${Green} 是否卸载 sing-box (VMess/AnyTLS) [Y/N]? ${Font}"
         read -r uninstall_singbox
         case $uninstall_singbox in
         [yY][eE][sS] | [yY])
