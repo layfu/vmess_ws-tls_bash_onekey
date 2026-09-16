@@ -141,6 +141,22 @@ jobs:
             exit 1
           fi
 
+      - name: Patch Clash API to expose closed connections (exact bytes)
+        run: |
+          set -e
+          # sing-box keeps the last N closed connections with their final byte
+          # counts (user, outbound chain, destination). Expose them so the panel
+          # sees every connection exactly, not just the ones alive at poll time.
+          if [ -f experimental/clashapi/connections.go ]; then
+            sed -i 's/common\.Filter(trafficManager\.Connections(), func/common.Filter(append(trafficManager.Connections(), trafficManager.ClosedConnections()...), func/' experimental/clashapi/connections.go
+            grep -q 'trafficManager.ClosedConnections()' experimental/clashapi/connections.go
+          fi
+          # Raise the ring-buffer limit so the 1s poller never misses an entry.
+          if [ -f common/trafficcontrol/manager.go ]; then
+            sed -i 's/const closedConnectionsLimit = 1000/const closedConnectionsLimit = 20000/' common/trafficcontrol/manager.go
+            grep -q 'closedConnectionsLimit = 20000' common/trafficcontrol/manager.go
+          fi
+
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'

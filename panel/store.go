@@ -62,6 +62,12 @@ CREATE TABLE IF NOT EXISTS user_target_traffic (
   downlink INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (username, protocol, host, status, hour)
 );
+CREATE TABLE IF NOT EXISTS clash_conn (
+  id TEXT PRIMARY KEY,
+  up INTEGER NOT NULL DEFAULT 0,
+  down INTEGER NOT NULL DEFAULT 0,
+  seen INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS outbound_hourly (
   tag TEXT NOT NULL,
   hour INTEGER NOT NULL,
@@ -80,6 +86,7 @@ CREATE INDEX IF NOT EXISTS idx_connections_ts ON connections(ts);
 CREATE INDEX IF NOT EXISTS idx_hourly_hour ON hourly(hour);
 CREATE INDEX IF NOT EXISTS idx_target_traffic_hour ON target_traffic(hour);
 CREATE INDEX IF NOT EXISTS idx_user_target_traffic_hour ON user_target_traffic(hour);
+CREATE INDEX IF NOT EXISTS idx_clash_conn_seen ON clash_conn(seen);
 CREATE INDEX IF NOT EXISTS idx_outbound_hourly_hour ON outbound_hourly(hour);
 CREATE INDEX IF NOT EXISTS idx_inbound_hourly_hour ON inbound_hourly(hour);
 `
@@ -557,6 +564,59 @@ func (s *store) pruneTargetTraffic(maxAge time.Duration) {
 		_, _ = s.db.Exec(`DELETE FROM target_traffic WHERE hour < ?`, cutoff)
 		_, _ = s.db.Exec(`DELETE FROM user_target_traffic WHERE hour < ?`, cutoff)
 	}
+}
+
+// loadClashConns returns the last-seen byte counts per Clash connection id, so
+// the poller can resume after a restart without re-counting connections it has
+// already accounted for.
+func (s *store) loadClashConns() (map[string]clashConnBytes, error) {
+	rows, err := s.db.Query(`SELECT id, up, down FROM clash_conn`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	m := make(map[string]clashConnBytes)
+	for rows.Next() {
+		var id string
+		var b clashConnBytes
+		if err := rows.Scan(&id, &b.up, &b.down); err != nil {
+			return nil, err
+		}
+		m[id] = b
+	}
+	return m, rows.Err()
+}
+
+// saveClashConns persists the last-seen byte counts per connection id and drops
+// entries that have not been seen for a day (the connections they describe are
+// long gone from sing-box's closed-connection buffer).
+func (s *store) saveClashConns(m map[string]clashConnBytes) error {
+	now := time.Now().Unix()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	stmt, err := tx.Prepare(
+		`INSERT INTO clash_conn (id, up, down, seen) VALUES (?, ?, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET up = excluded.up, down = excluded.down, seen = excluded.seen`,
+	)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	for id, b := range m {
+		if _, err := stmt.Exec(id, b.up, b.down, now); err != nil {
+			stmt.Close()
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	stmt.Close()
+	if _, err := tx.Exec(`DELETE FROM clash_conn WHERE seen < ?`, now-24*3600); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
 }
 
 // addOutboundTraffic accumulates per-outbound bytes (from the v2ray_api outbound

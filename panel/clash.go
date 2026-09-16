@@ -23,6 +23,7 @@ type clashPoller struct {
 	last      map[string]clashConnBytes
 	buf       map[targetKey]trafficDelta
 	lastDebug time.Time
+	firstPoll bool
 }
 
 type clashConnBytes struct {
@@ -58,12 +59,20 @@ type clashSnapshot struct {
 }
 
 func newClashPoller(st *store, addr string) *clashPoller {
+	last, err := st.loadClashConns()
+	if err != nil {
+		log.Printf("clash: load seen connections: %v", err)
+	}
+	if last == nil {
+		last = make(map[string]clashConnBytes)
+	}
 	return &clashPoller{
-		store:  st,
-		addr:   addr,
-		client: &http.Client{Timeout: 3 * time.Second},
-		last:   make(map[string]clashConnBytes),
-		buf:    make(map[targetKey]trafficDelta),
+		store:     st,
+		addr:      addr,
+		client:    &http.Client{Timeout: 3 * time.Second},
+		last:      last,
+		buf:       make(map[targetKey]trafficDelta),
+		firstPoll: len(last) == 0,
 	}
 }
 
@@ -107,7 +116,7 @@ func (p *clashPoller) poll(ctx context.Context) {
 	// target layer can be debugged (check `journalctl -u panel | grep clash:`).
 	if time.Since(p.lastDebug) >= time.Minute {
 		p.lastDebug = time.Now()
-		log.Printf("clash: %d active connections", len(snap.Connections))
+		log.Printf("clash: %d connections (active + recently closed)", len(snap.Connections))
 		for i, c := range snap.Connections {
 			if i >= 8 {
 				break
@@ -120,6 +129,8 @@ func (p *clashPoller) poll(ctx context.Context) {
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	baseline := p.firstPoll
+	p.firstPoll = false
 	seen := make(map[string]bool, len(snap.Connections))
 	for _, c := range snap.Connections {
 		seen[c.ID] = true
@@ -135,6 +146,11 @@ func (p *clashPoller) poll(ctx context.Context) {
 			dd = c.Download
 		}
 		p.last[c.ID] = clashConnBytes{up: c.Upload, down: c.Download}
+		if baseline {
+			// First run: record what already exists (including sing-box's
+			// buffered closed connections) without attributing it to "now".
+			continue
+		}
 		if du == 0 && dd == 0 {
 			continue
 		}
@@ -168,7 +184,16 @@ func (p *clashPoller) flush() {
 	p.mu.Lock()
 	buf := p.buf
 	p.buf = make(map[targetKey]trafficDelta)
+	seen := make(map[string]clashConnBytes, len(p.last))
+	for id, b := range p.last {
+		seen[id] = b
+	}
 	p.mu.Unlock()
+	// Persist the last-seen byte counts so a restart resumes deltas instead of
+	// re-counting connections (active or closed) it already accounted for.
+	if err := p.store.saveClashConns(seen); err != nil {
+		log.Printf("clash: save seen connections: %v", err)
+	}
 	if len(buf) == 0 {
 		return
 	}

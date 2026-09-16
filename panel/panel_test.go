@@ -596,6 +596,44 @@ func TestBuildTopologyOtherBuckets(t *testing.T) {
 	}
 }
 
+func TestClashConnPersistence(t *testing.T) {
+	st, err := openStore(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	in := map[string]clashConnBytes{
+		"a": {up: 10, down: 20},
+		"b": {up: 1, down: 2},
+	}
+	if err := st.saveClashConns(in); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.loadClashConns()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got["a"].up != 10 || got["a"].down != 20 || got["b"].up != 1 {
+		t.Errorf("loaded = %+v", got)
+	}
+
+	// Updating one id must not drop the other (still seen within a day).
+	if err := st.saveClashConns(map[string]clashConnBytes{"a": {up: 30, down: 40}}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = st.loadClashConns()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["a"].up != 30 || got["a"].down != 40 {
+		t.Errorf("a = %+v", got["a"])
+	}
+	if _, ok := got["b"]; !ok {
+		t.Errorf("b should still be present")
+	}
+}
+
 func TestHourlyRange(t *testing.T) {
 	st, err := openStore(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
