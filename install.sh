@@ -22,7 +22,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.9.32"
+shell_version="1.6.9.33"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -4143,12 +4143,17 @@ panel_traffic_reset() {
     fi
     systemctl stop panel >/dev/null 2>&1
     # 注意：不清 counters（增量基线），否则下一轮会把累计值当增量写入产生尖峰。
-    if sqlite3 "${panel_db}" \
-        "DELETE FROM hourly; DELETE FROM totals; DELETE FROM target_traffic; DELETE FROM outbound_hourly; DELETE FROM inbound_hourly;"; then
-        systemctl start panel >/dev/null 2>&1
+    # 逐表删除并跳过不存在的表（旧版本可能还没有 inbound_hourly / outbound_hourly）。
+    local t ok=1
+    for t in hourly totals target_traffic outbound_hourly inbound_hourly; do
+        if [[ "$(sqlite3 "${panel_db}" "SELECT name FROM sqlite_master WHERE type='table' AND name='${t}';" 2>/dev/null)" == "${t}" ]]; then
+            sqlite3 "${panel_db}" "DELETE FROM ${t};" 2>/dev/null || ok=0
+        fi
+    done
+    systemctl start panel >/dev/null 2>&1
+    if [[ ${ok} -eq 1 ]]; then
         echo -e "${OK} ${GreenBG} 已清空流量统计，面板已重启（数值从此刻重新累积） ${Font}"
     else
-        systemctl start panel >/dev/null 2>&1
         echo -e "${Error} ${RedBG} 清空失败，请检查 ${panel_db} ${Font}"
     fi
 }

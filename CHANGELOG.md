@@ -1,4 +1,5 @@
 ## 2026-09-16
+* 修复「清空流量统计」在表不存在时报「清空失败」：改为逐表删除并跳过不存在的表（旧面板版本可能还没有 `inbound_hourly`/`outbound_hourly`）（脚本 1.6.9.33）
 * 路由拓扑协议层改用 sing-box 的 **inbound 统计**（`inbound>>>vmess-in/anytls-in>>>traffic`）：每个协议的流量按入站准确统计，同名用户跨协议也不会错；用户层仍是按用户名合并的 user 统计（sing-box 同名用户共用一个计数器）。新增 `inbound_hourly` 表与 inbound 采集（面板 2.0.5 / 脚本 1.6.9.32）
 * 修复路由拓扑「服务器」流量是出口的两倍：VMess 与 AnyTLS 同名用户（如 admin）在 sing-box 里共用同一个 `user>>>admin>>>traffic` 计数器，collector 用 vmess/anytls 两个源各读一次导致翻倍；现按用户名跨源去重（仅当两个 stats 源指向同一 API 时），脚本生成的 `stats.users` 也去重（面板 2.0.4 / 脚本 1.6.9.31）
 * 「其他」菜单新增第 7 项「清空流量统计」：二次确认后清空 `hourly / totals / target_traffic / outbound_hourly`（趋势 / 当月 / 累计 / 历史统计 / 路由拓扑），不清 `counters` 增量基线以免产生尖峰（脚本 1.6.9.30）
