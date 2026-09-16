@@ -1,4 +1,5 @@
 ## 2026-09-16
+* 修复卸载 sing-box 后仍提示「已安装 VMess」无法重装：VMess 的「已安装」判定改为同时要求 sing-box 配置里存在 `vmess-in`；「卸载 sing-box」同时清理 VMess 用户/QR 残留（脚本 1.6.9.27）
 * 卸载菜单新增「卸载 VMess」：删除 VMess 用户/QR/内部端口，若还装有 AnyTLS 则重生成 sing-box 配置并重启；「卸载 sing-box」文案改为 VMess/AnyTLS（脚本 1.6.9.26）
 * 修复 VMess 迁移后连接失败：install.sh 中存在两个 `v2ray_conf_add` 定义，后定义的老 v2ray 版本覆盖了新别名，导致配置写到 v2ray 而非 sing-box、`/etc/sing-box/config.json` 未生成、Nginx 反代到无进程的端口。已删除重复定义（脚本 1.6.9.25）
 * **重大变更**：VMess (ws+tls) 后端由 v2ray 迁移到 sing-box（仅新装）。Nginx 继续终止 TLS 并把 WS 反代到 sing-box 的 `vmess-in`；VMess 与 AnyTLS 共用同一个 sing-box 实例、同一套路由与统计；客户端链接不变（面板 2.0.0）

@@ -22,7 +22,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.9.26"
+shell_version="1.6.9.27"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -3066,8 +3066,11 @@ uninstall_all() {
             rm -f ${singbox_bin_dir}
             rm -rf ${singbox_conf_dir}
             rm -f ${anytls_info_file}
+            rm -f "${vmess_users_file}"
+            rm -f "${v2ray_qr_config_file}"
+            rm -f "${v2ray_info_file}"
             uninstalled_any=1
-            echo -e "${OK} ${Green} 已卸载 sing-box (AnyTLS) ${Font}"
+            echo -e "${OK} ${Green} 已卸载 sing-box (VMess/AnyTLS) ${Font}"
             ;;
         *) ;;
 
@@ -3136,7 +3139,7 @@ judge_mode() {
 }
 install_v2ray_ws_tls() {
     is_root
-    if [[ -f "${vmess_users_file}" ]] && [[ -s "${vmess_users_file}" ]]; then
+    if [[ -s "${vmess_users_file}" ]] && [[ -f "${singbox_conf}" ]] && grep -q '"vmess-in"' "${singbox_conf}"; then
         echo -e "${Error} ${RedBG} 已安装 VMess (ws+tls)，拒绝重复安装 ${Font}"
         return 1
     fi
