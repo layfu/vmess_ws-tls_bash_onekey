@@ -1,4 +1,5 @@
 ## 2026-09-16
+* 修复路由拓扑「服务器」流量是出口的两倍：VMess 与 AnyTLS 同名用户（如 admin）在 sing-box 里共用同一个 `user>>>admin>>>traffic` 计数器，collector 用 vmess/anytls 两个源各读一次导致翻倍；现按用户名跨源去重（仅当两个 stats 源指向同一 API 时），脚本生成的 `stats.users` 也去重（面板 2.0.4 / 脚本 1.6.9.31）
 * 「其他」菜单新增第 7 项「清空流量统计」：二次确认后清空 `hourly / totals / target_traffic / outbound_hourly`（趋势 / 当月 / 累计 / 历史统计 / 路由拓扑），不清 `counters` 增量基线以免产生尖峰（脚本 1.6.9.30）
 * 修复 AnyTLS 端口解析导致 sing-box 配置变成非法 JSON、sing-box 无法启动（代理全断）：`singbox_conf_add` 之前用 `grep '"listen_port"' | awk -F ':'` 从单行配置里重新解析端口，会得到 `"vmess""tag"` 之类的坏值并写入 `"listen_port":"vmess""tag"`；现改为把 AnyTLS 端口持久化到 `/etc/sing-box/anytls_port` 并读回，`surge_config_output` 同样处理，`anytls_users_ensure` 的密码解析改用 `grep -o`（脚本 1.6.9.29）
 * 路由拓扑出口层改用 v2ray_api 的 outbound 统计（与用户统计同源、完整 24h）：直连/WARP 的流量与服务器总量守恒；目标层按该出口的准确总量对 Clash 抽样做**等比缩放**（保留目标相对占比）；封禁改为按**拦截次数**显示并用虚线区分（新增 `outbound_hourly` 表与 outbound 采集，两个 stats 源只读一次避免重复计数）（面板 2.0.3）

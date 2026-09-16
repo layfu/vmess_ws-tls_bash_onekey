@@ -22,7 +22,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.9.30"
+shell_version="1.6.9.31"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -1758,6 +1758,7 @@ singbox_conf_add() {
     fi
     if panel_installed && singbox_has_v2ray_api; then
         local stats_users_json="" su first_su=1 stats_inbounds_json=""
+        local -A stats_seen=()
         if [[ -n "${vmess_users_json}" ]]; then
             stats_inbounds_json="\"vmess-in\""
         fi
@@ -1765,9 +1766,12 @@ singbox_conf_add() {
             [[ -n "${stats_inbounds_json}" ]] && stats_inbounds_json="${stats_inbounds_json},"
             stats_inbounds_json="${stats_inbounds_json}\"anytls-in\""
         fi
+        # 同名用户在 VMess/AnyTLS 共用同一个 user>>> 计数器，去重避免重复统计。
         if [[ -s "${anytls_users_file}" ]]; then
             while read -r su _; do
                 [[ -z "${su}" ]] && continue
+                [[ -n "${stats_seen[$su]:-}" ]] && continue
+                stats_seen[$su]=1
                 if [[ ${first_su} -eq 1 ]]; then first_su=0; else stats_users_json="${stats_users_json},"; fi
                 stats_users_json="${stats_users_json}\"${su}\""
             done <"${anytls_users_file}"
@@ -1775,7 +1779,9 @@ singbox_conf_add() {
         if [[ -s "${vmess_users_file}" ]]; then
             while read -r su _; do
                 [[ -z "${su}" ]] && continue
-                [[ -n "${stats_users_json}" ]] && stats_users_json="${stats_users_json},"
+                [[ -n "${stats_seen[$su]:-}" ]] && continue
+                stats_seen[$su]=1
+                if [[ ${first_su} -eq 1 ]]; then first_su=0; else stats_users_json="${stats_users_json},"; fi
                 stats_users_json="${stats_users_json}\"${su}\""
             done <"${vmess_users_file}"
         fi
