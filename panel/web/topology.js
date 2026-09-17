@@ -49,6 +49,7 @@
   let cells = [];
   let hoverFilter = null;
   let hoverMinLayer = 0;
+  let hoverMaxLayer = 0;
   let hovered = null;
   let hiddenByTab = document.hidden;
   let offscreen = false;
@@ -70,6 +71,14 @@
     if (kind === 'server') return 2;
     if (kind === 'target') return 4;
     return 3;
+  }
+
+  // 悬停某一层时要激活的层窗口：中间三层取本层 ±1，用户层展开到全部下游，
+  // 目标层只留自己。其余层置灰。
+  function hoverWindow(layer) {
+    if (layer <= 0) return [0, 4];
+    if (layer >= 4) return [4, 4];
+    return [layer - 1, layer + 1];
   }
 
   // 节点 id → 维度（用于在 cells 上做过滤/边际求和）。
@@ -200,6 +209,7 @@
     edgeList = [];
     hoverFilter = null;
     hoverMinLayer = 0;
+    hoverMaxLayer = 0;
     hovered = null;
   }
 
@@ -341,15 +351,17 @@
   }
 
   // 悬停某个节点时，用该节点的维度作为过滤条件，在 cells 上重新求每个节点/连线的
-  // 边际和：悬停节点本身 + 其下游（层号更大且该切片下数值 > 0）激活，其余（含同层
-  // 兄弟节点与所有上游）置灰。不悬停时显示全量边际。
-  function applyFilter(filter, minLayer) {
+  // 边际和：只有落在层窗口 [minLayer,maxLayer] 内、且是悬停节点本身或该切片下数值
+  // > 0 的节点激活（同层兄弟在过滤下为 0，自然置灰），窗口外的层全部置灰。
+  // 不悬停时显示全量边际。
+  function applyFilter(filter, minLayer, maxLayer) {
     const nodeActive = new Set();
     for (const [nid, el] of nodeEls) {
       const n = nodeById.get(nid);
       if (!n) continue;
       const v = sliceSum(filter, dimOf(nid), nid, n.unit);
-      const active = nid === hovered || (layerOf(n.kind) > minLayer && v > 0);
+      const layer = layerOf(n.kind);
+      const active = layer >= minLayer && layer <= maxLayer && (nid === hovered || v > 0);
       if (active) nodeActive.add(nid);
       el.classList.toggle('dim', !active);
       const c = el.querySelector('.topo-node-count');
@@ -406,11 +418,13 @@
     hovered = id;
     const n = nodeById.get(id);
     if (!n) return;
-    hoverMinLayer = layerOf(n.kind);
+    const win = hoverWindow(layerOf(n.kind));
+    hoverMinLayer = win[0];
+    hoverMaxLayer = win[1];
     hoverFilter = {};
     const d = dimOf(id);
     if (d) hoverFilter[d] = id;
-    applyFilter(hoverFilter, hoverMinLayer);
+    applyFilter(hoverFilter, hoverMinLayer, hoverMaxLayer);
   }
 
   function clearHighlight() {
@@ -450,7 +464,7 @@
       buildEdges();
     } else {
       updateInPlace();
-      if (hoverFilter) applyFilter(hoverFilter, hoverMinLayer);
+      if (hoverFilter) applyFilter(hoverFilter, hoverMinLayer, hoverMaxLayer);
     }
     renderSummary();
     applyPause();
