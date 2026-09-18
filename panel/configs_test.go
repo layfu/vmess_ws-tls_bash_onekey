@@ -67,6 +67,29 @@ func writeFile(t *testing.T, dir, name, content string) string {
 	return p
 }
 
+func TestLoadConfigLegacyV2RaySection(t *testing.T) {
+	dir := t.TempDir()
+	// Older configs named the VMess section "v2ray"; it must still be read.
+	legacy := writeFile(t, dir, "legacy.json", `{"v2ray":{"enabled":true,"api_addr":"127.0.0.1:9999","users_file":"/x/users"}}`)
+	cfg, err := loadConfig(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.VMess.Enabled || cfg.VMess.APIAddr != "127.0.0.1:9999" || cfg.VMess.UsersFile != "/x/users" {
+		t.Errorf("legacy v2ray section not mapped: %+v", cfg.VMess)
+	}
+
+	// The new "vmess" key wins when both are present.
+	both := writeFile(t, dir, "both.json", `{"vmess":{"api_addr":"127.0.0.1:1111"},"v2ray":{"api_addr":"127.0.0.1:2222"}}`)
+	cfg, err = loadConfig(both)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.VMess.APIAddr != "127.0.0.1:1111" {
+		t.Errorf("new vmess section should win, got %q", cfg.VMess.APIAddr)
+	}
+}
+
 func TestLoadVmessConfigs(t *testing.T) {
 	dir := t.TempDir()
 	usersFile := writeFile(t, dir, "users", "alice uuid-alice\nbob uuid-bob\n")
@@ -142,7 +165,7 @@ func TestLoadAllConfigsSorted(t *testing.T) {
 	aDomain := writeFile(t, dir, "adomain", "example.com\n")
 
 	cfg := &Config{
-		V2Ray:   ProtocolConfig{UsersFile: vUsers, QrFile: vQr, ConfigFile: vConf},
+		VMess:   ProtocolConfig{UsersFile: vUsers, QrFile: vQr, ConfigFile: vConf},
 		SingBox: ProtocolConfig{UsersFile: aUsers, ConfigFile: aConf, DomainFile: aDomain},
 	}
 	all := loadAllConfigs(cfg)

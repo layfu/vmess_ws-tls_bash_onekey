@@ -12,7 +12,7 @@ import (
 
 // clashPoller periodically reads sing-box's Clash API /connections endpoint and
 // accumulates per-destination traffic. This is the only source that exposes
-// per-target bytes (v2ray/sing-box stats only aggregate per user/inbound/
+// per-target bytes (sing-box stats only aggregate per user/inbound/
 // outbound). Only active connections are visible, so very short connections
 // between polls are not counted; long-lived transfers dominate the totals.
 type clashPoller struct {

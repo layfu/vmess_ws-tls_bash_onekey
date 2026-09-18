@@ -6,14 +6,14 @@ import (
 	"time"
 )
 
-// correlator matches VMess connections (from v2ray access log, which only
+// correlator matches VMess connections (from the sing-box log, which only
 // sees the Nginx loopback source 127.0.0.1:port) with the real client IP
 // (from the Nginx WebSocket access log) by timestamp.
 type vmessEntry struct {
 	ts     int64
 	user   string
 	target string
-	src    string // v2ray-observed source, e.g. "127.0.0.1:54321"
+	src    string // sing-box-observed source, e.g. "127.0.0.1:54321"
 }
 
 type wsEntry struct {

@@ -43,15 +43,6 @@ CREATE TABLE IF NOT EXISTS connections (
   target TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT ''
 );
-CREATE TABLE IF NOT EXISTS target_traffic (
-  protocol TEXT NOT NULL,
-  host TEXT NOT NULL,
-  status TEXT NOT NULL,
-  hour INTEGER NOT NULL,
-  uplink INTEGER NOT NULL DEFAULT 0,
-  downlink INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (protocol, host, status, hour)
-);
 CREATE TABLE IF NOT EXISTS user_target_traffic (
   username TEXT NOT NULL,
   protocol TEXT NOT NULL,
@@ -77,28 +68,11 @@ CREATE TABLE IF NOT EXISTS user_outbound_hourly (
   downlink INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (username, protocol, tag, hour)
 );
-CREATE TABLE IF NOT EXISTS outbound_hourly (
-  tag TEXT NOT NULL,
-  hour INTEGER NOT NULL,
-  uplink INTEGER NOT NULL DEFAULT 0,
-  downlink INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (tag, hour)
-);
-CREATE TABLE IF NOT EXISTS inbound_hourly (
-  protocol TEXT NOT NULL,
-  hour INTEGER NOT NULL,
-  uplink INTEGER NOT NULL DEFAULT 0,
-  downlink INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (protocol, hour)
-);
 CREATE INDEX IF NOT EXISTS idx_connections_ts ON connections(ts);
 CREATE INDEX IF NOT EXISTS idx_hourly_hour ON hourly(hour);
-CREATE INDEX IF NOT EXISTS idx_target_traffic_hour ON target_traffic(hour);
 CREATE INDEX IF NOT EXISTS idx_user_target_traffic_hour ON user_target_traffic(hour);
 CREATE INDEX IF NOT EXISTS idx_clash_conn_seen ON clash_conn(seen);
 CREATE INDEX IF NOT EXISTS idx_user_outbound_hourly_hour ON user_outbound_hourly(hour);
-CREATE INDEX IF NOT EXISTS idx_outbound_hourly_hour ON outbound_hourly(hour);
-CREATE INDEX IF NOT EXISTS idx_inbound_hourly_hour ON inbound_hourly(hour);
 `
 
 type store struct {
@@ -152,17 +126,18 @@ func migrate(db *sql.DB) error {
 			}
 		}
 	}
-	// Legacy aggregate target traffic predates per-user tracking. Fold it in with
-	// an empty username so the topology's target layer keeps its history.
-	if _, err := db.Exec(`INSERT OR IGNORE INTO user_target_traffic (username, protocol, host, status, hour, uplink, downlink)
-		SELECT '', protocol, host, status, hour, uplink, downlink FROM target_traffic`); err != nil {
-		return err
-	}
 	// sing-box user names are namespaced in the config ("v:"/"a:"). Older
 	// connection rows stored the raw name; strip it so they match the per-user
 	// stats (usernames cannot contain ":").
 	for _, prefix := range []string{"v:", "a:"} {
 		if _, err := db.Exec(`UPDATE connections SET username = substr(username, 3) WHERE username LIKE ?`, prefix+"%"); err != nil {
+			return err
+		}
+	}
+	// Drop tables left behind by earlier versions (the topology now reads
+	// user_target_traffic / user_outbound_hourly only).
+	for _, table := range []string{"target_traffic", "outbound_hourly", "inbound_hourly"} {
+		if _, err := db.Exec(`DROP TABLE IF EXISTS ` + table); err != nil {
 			return err
 		}
 	}
@@ -464,14 +439,6 @@ func (s *store) connectionGraph(since int64) ([]connGraphRow, error) {
 	return out, rows.Err()
 }
 
-type targetTrafficRow struct {
-	Protocol string
-	Host     string
-	Status   string
-	Uplink   int64
-	Downlink int64
-}
-
 // addUserTargetTraffic accumulates per-(user,destination) bytes (collected from
 // the sing-box Clash API, which we patch to expose the authenticated user) into
 // the current hour bucket. This is what lets the topology show a user's own
@@ -517,61 +484,9 @@ func (s *store) userTargetTraffic(since int64) ([]userTargetTrafficRow, error) {
 	return out, rows.Err()
 }
 
-// targetTraffic returns per-(protocol,host,status) bytes aggregated over users.
-func (s *store) targetTraffic(since int64) ([]targetTrafficRow, error) {
-	rows, err := s.db.Query(
-		`SELECT protocol, host, status, SUM(uplink), SUM(downlink) FROM user_target_traffic
-		 WHERE hour >= ? GROUP BY protocol, host, status`,
-		since,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []targetTrafficRow
-	for rows.Next() {
-		var r targetTrafficRow
-		if err := rows.Scan(&r.Protocol, &r.Host, &r.Status, &r.Uplink, &r.Downlink); err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
-type userTrafficRow struct {
-	Protocol string
-	Username string
-	Uplink   int64
-	Downlink int64
-}
-
-// userProtocolTraffic returns per (protocol, user) bytes over the window.
-func (s *store) userProtocolTraffic(since int64) ([]userTrafficRow, error) {
-	rows, err := s.db.Query(
-		`SELECT protocol, username, SUM(uplink), SUM(downlink) FROM hourly
-		 WHERE hour >= ? GROUP BY protocol, username`,
-		since,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []userTrafficRow
-	for rows.Next() {
-		var r userTrafficRow
-		if err := rows.Scan(&r.Protocol, &r.Username, &r.Uplink, &r.Downlink); err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
 func (s *store) pruneTargetTraffic(maxAge time.Duration) {
 	if maxAge > 0 {
 		cutoff := time.Now().Add(-maxAge).Unix()
-		_, _ = s.db.Exec(`DELETE FROM target_traffic WHERE hour < ?`, cutoff)
 		_, _ = s.db.Exec(`DELETE FROM user_target_traffic WHERE hour < ?`, cutoff)
 	}
 }
@@ -629,48 +544,6 @@ func (s *store) saveClashConns(m map[string]clashConnBytes) error {
 	return tx.Commit()
 }
 
-// addOutboundTraffic accumulates per-outbound bytes (from the v2ray_api outbound
-// stats) into the current hour bucket.
-func (s *store) addOutboundTraffic(tag string, hour, uplink, downlink int64) error {
-	_, err := s.db.Exec(
-		`INSERT INTO outbound_hourly (tag, hour, uplink, downlink) VALUES (?, ?, ?, ?)
-		 ON CONFLICT(tag, hour) DO UPDATE SET
-		   uplink = uplink + excluded.uplink,
-		   downlink = downlink + excluded.downlink`,
-		tag, hour, uplink, downlink,
-	)
-	return err
-}
-
-// outboundTraffic returns per-tag total bytes over the window.
-func (s *store) outboundTraffic(since int64) (map[string]int64, error) {
-	rows, err := s.db.Query(
-		`SELECT tag, SUM(uplink + downlink) FROM outbound_hourly WHERE hour >= ? GROUP BY tag`,
-		since,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	m := make(map[string]int64)
-	for rows.Next() {
-		var tag string
-		var v int64
-		if err := rows.Scan(&tag, &v); err != nil {
-			return nil, err
-		}
-		m[tag] = v
-	}
-	return m, rows.Err()
-}
-
-func (s *store) pruneOutboundTraffic(maxAge time.Duration) {
-	if maxAge > 0 {
-		cutoff := time.Now().Add(-maxAge).Unix()
-		_, _ = s.db.Exec(`DELETE FROM outbound_hourly WHERE hour < ?`, cutoff)
-	}
-}
-
 // userOutboundRow is the exact per-(user, protocol, outbound) traffic, from the
 // custom user_outbound>>> counter.
 type userOutboundRow struct {
@@ -718,48 +591,6 @@ func (s *store) pruneUserOutboundTraffic(maxAge time.Duration) {
 	if maxAge > 0 {
 		cutoff := time.Now().Add(-maxAge).Unix()
 		_, _ = s.db.Exec(`DELETE FROM user_outbound_hourly WHERE hour < ?`, cutoff)
-	}
-}
-
-// addInboundTraffic accumulates per-protocol inbound bytes (from the v2ray_api
-// inbound stats) into the current hour bucket.
-func (s *store) addInboundTraffic(protocol string, hour, uplink, downlink int64) error {
-	_, err := s.db.Exec(
-		`INSERT INTO inbound_hourly (protocol, hour, uplink, downlink) VALUES (?, ?, ?, ?)
-		 ON CONFLICT(protocol, hour) DO UPDATE SET
-		   uplink = uplink + excluded.uplink,
-		   downlink = downlink + excluded.downlink`,
-		protocol, hour, uplink, downlink,
-	)
-	return err
-}
-
-// inboundTraffic returns per-protocol total bytes over the window.
-func (s *store) inboundTraffic(since int64) (map[string]int64, error) {
-	rows, err := s.db.Query(
-		`SELECT protocol, SUM(uplink + downlink) FROM inbound_hourly WHERE hour >= ? GROUP BY protocol`,
-		since,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	m := make(map[string]int64)
-	for rows.Next() {
-		var protocol string
-		var v int64
-		if err := rows.Scan(&protocol, &v); err != nil {
-			return nil, err
-		}
-		m[protocol] = v
-	}
-	return m, rows.Err()
-}
-
-func (s *store) pruneInboundTraffic(maxAge time.Duration) {
-	if maxAge > 0 {
-		cutoff := time.Now().Add(-maxAge).Unix()
-		_, _ = s.db.Exec(`DELETE FROM inbound_hourly WHERE hour < ?`, cutoff)
 	}
 }
 

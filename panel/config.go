@@ -8,7 +8,6 @@ import (
 type ProtocolConfig struct {
 	Enabled        bool   `json:"enabled"`
 	APIAddr        string `json:"api_addr"`
-	AccessLog      string `json:"access_log"`
 	WSAccessLog    string `json:"ws_access_log"`
 	LogFile        string `json:"log_file"`
 	UsersFile      string `json:"users_file"`
@@ -31,7 +30,7 @@ type Config struct {
 	SessionTTLSec     int            `json:"session_ttl_sec"`
 	LoginMaxFails     int            `json:"login_max_fails"`
 	LoginLockSec      int            `json:"login_lock_sec"`
-	V2Ray             ProtocolConfig `json:"v2ray"`
+	VMess             ProtocolConfig `json:"vmess"`
 	SingBox           ProtocolConfig `json:"singbox"`
 }
 
@@ -47,10 +46,9 @@ func defaultConfig() *Config {
 		SessionTTLSec:     604800,
 		LoginMaxFails:     5,
 		LoginLockSec:      1800,
-		V2Ray: ProtocolConfig{
+		VMess: ProtocolConfig{
 			Enabled:     false,
 			APIAddr:     "127.0.0.1:50085",
-			AccessLog:   "/var/log/v2ray/access.log",
 			WSAccessLog: "/var/log/nginx/ws-access.log",
 			UsersFile:   "/etc/v2ray/users",
 			ConfigFile:  "/etc/v2ray/config.json",
@@ -78,6 +76,15 @@ func loadConfig(path string) (*Config, error) {
 	}
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, err
+	}
+	// Backward compatibility: older configs named the VMess section "v2ray".
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err == nil {
+		if _, ok := raw["vmess"]; !ok {
+			if legacy, ok := raw["v2ray"]; ok {
+				_ = json.Unmarshal(legacy, &cfg.VMess)
+			}
+		}
 	}
 	if cfg.PollIntervalSec <= 0 {
 		cfg.PollIntervalSec = 15

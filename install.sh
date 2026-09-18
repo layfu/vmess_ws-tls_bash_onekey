@@ -22,36 +22,23 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.9.37"
+shell_version="1.6.9.38"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
-v2ray_conf_dir="/etc/v2ray"
 nginx_conf_dir="/etc/nginx/conf/conf.d"
-v2ray_conf="${v2ray_conf_dir}/config.json"
 nginx_conf="${nginx_conf_dir}/v2ray.conf"
 nginx_dir="/etc/nginx"
-web_dir="/home/wwwroot"
 nginx_openssl_src="/usr/local/src"
-v2ray_bin_dir_old="/usr/bin/v2ray"
-v2ray_bin_dir="/usr/local/bin/v2ray"
-v2ctl_bin_dir="/usr/local/bin/v2ctl"
 v2ray_info_file="$HOME/v2ray_info.inf"
 v2ray_qr_config_file="/usr/local/vmess_qr.json"
 vmess_users_file="/etc/v2ray/users"
-routing_conf_file="/etc/v2ray/routing.conf"
-block_domains_file="/etc/v2ray/block_domains"
-block_ips_file="/etc/v2ray/block_ips"
 warp_socks_port="40000"
-warp_users_file="/etc/v2ray/warp_users"
 anytls_warp_users_file="/etc/sing-box/warp_users"
 warp_healthcheck_file="/usr/local/bin/warp-healthcheck.sh"
 warp_systemd_service="/etc/systemd/system/warp-healthcheck.service"
 warp_systemd_timer="/etc/systemd/system/warp-healthcheck.timer"
 nginx_systemd_file="/etc/systemd/system/nginx.service"
-v2ray_systemd_file="/etc/systemd/system/v2ray.service"
-v2ray_access_log="/var/log/v2ray/access.log"
-v2ray_error_log="/var/log/v2ray/error.log"
 singbox_bin_dir="/usr/local/bin/sing-box"
 singbox_conf_dir="/etc/sing-box"
 singbox_conf="${singbox_conf_dir}/config.json"
@@ -79,7 +66,6 @@ panel_systemd_file="/etc/systemd/system/panel.service"
 panel_auth_file="/etc/panel/panel.htpasswd"
 panel_session_key="/etc/panel/panel.key"
 panel_listen_addr="127.0.0.1:2052"
-panel_v2ray_api_port="50085"
 panel_singbox_api_port="50086"
 panel_clash_api_port="50087"
 panel_geo_db="/etc/panel/ip2region_v4.xdb"
@@ -88,7 +74,6 @@ singbox_vmess_port_file="/etc/sing-box/vmess_port"
 singbox_anytls_port_file="/etc/sing-box/anytls_port"
 nginx_ws_access_log="/var/log/nginx/ws-access.log"
 panel_repo="layfu/vmess_ws-tls_bash_onekey"
-# v2ray_plugin_version="$(wget -qO- "https://github.com/shadowsocks/v2ray-plugin/tags" | grep -E "/shadowsocks/v2ray-plugin/releases/tag/" | head -1 | sed -r 's/.*tag\/v(.+)\">.*/\1/')"
 
 #移动旧版本配置信息 对小于 1.1.0 版本适配
 [[ -f "/etc/v2ray/vmess_qr.json" ]] && mv /etc/v2ray/vmess_qr.json $v2ray_qr_config_file
@@ -312,104 +297,6 @@ web_camouflage() {
     cd /home/wwwroot || exit
     git clone https://github.com/wulabing/3DCEList.git
     judge "web 站点伪装"
-}
-
-v2ray_install() {
-    if [[ -d /root/v2ray ]]; then
-        rm -rf /root/v2ray
-    fi
-    if [[ -d /etc/v2ray ]]; then
-        rm -rf /etc/v2ray
-    fi
-    mkdir -p /root/v2ray
-    cd /root/v2ray || exit
-    wget -N --no-check-certificate https://raw.githubusercontent.com/layfu/vmess_ws-tls_bash_onekey/${github_branch}/v2ray.sh
-
-    if [[ -f v2ray.sh ]]; then
-        rm -rf $v2ray_systemd_file
-        systemctl daemon-reload
-        bash v2ray.sh --force
-        judge "安装 V2ray"
-    else
-        echo -e "${Error} ${RedBG} V2ray 安装文件下载失败，请检查下载地址是否可用 ${Font}"
-        exit 4
-    fi
-    # 清除临时文件
-    rm -rf /root/v2ray
-}
-
-v2ray_update() {
-    if [[ ! -f "${v2ray_bin_dir}" ]]; then
-        echo -e "${Error} ${RedBG} V2Ray 未安装，请先安装 V2Ray ${Font}"
-        return 1
-    fi
-
-    local current_ver
-    current_ver="$(${v2ray_bin_dir} version | head -n 1 | awk '{print $2}')"
-    echo -e "${OK} ${GreenBG} 当前 V2Ray 版本: ${current_ver} ${Font}"
-
-    echo -e "${OK} ${GreenBG} 正在检查最新版本... ${Font}"
-    local tmp_file latest_ver
-    tmp_file="$(mktemp)"
-    if ! curl -sS -H "Accept: application/vnd.github.v3+json" -o "$tmp_file" 'https://api.github.com/repos/v2fly/v2ray-core/releases/latest'; then
-        rm -f "$tmp_file"
-        echo -e "${Error} ${RedBG} 获取版本信息失败，请检查网络连接 ${Font}"
-        return 1
-    fi
-    latest_ver="$(sed 'y/,/\n/' "$tmp_file" | grep 'tag_name' | awk -F '"' '{print $4}')"
-    rm -f "$tmp_file"
-
-    if [[ -z "$latest_ver" ]]; then
-        echo -e "${Error} ${RedBG} 获取版本信息失败 ${Font}"
-        return 1
-    fi
-
-    latest_ver="${latest_ver#v}"
-    current_ver="${current_ver#v}"
-
-    if [[ "${current_ver}" == "${latest_ver}" ]]; then
-        echo -e "${OK} ${GreenBG} 当前已是最新版本 ${latest_ver}，无需升级 ${Font}"
-        return 0
-    fi
-
-    echo -e "${OK} ${GreenBG} 发现新版本: ${latest_ver} (当前: ${current_ver}) ${Font}"
-    read -rp "是否升级? [Y/N]: " update_confirm
-    case $update_confirm in
-        [yY][eE][sS]|[yY])
-            ;;
-        *)
-            echo -e "${OK} ${GreenBG} 已取消升级 ${Font}"
-            return 0
-            ;;
-    esac
-
-    local tmp_dir
-    tmp_dir="$(mktemp -d)"
-    cd "$tmp_dir" || return 1
-
-    echo -e "${OK} ${GreenBG} 正在下载升级脚本... ${Font}"
-    if ! wget --no-check-certificate -O v2ray.sh "https://raw.githubusercontent.com/layfu/vmess_ws-tls_bash_onekey/${github_branch}/v2ray.sh?t=$(date +%s)"; then
-        echo -e "${Error} ${RedBG} 下载升级脚本失败 ${Font}"
-        rm -rf "$tmp_dir"
-        return 1
-    fi
-
-    echo -e "${OK} ${GreenBG} 正在升级 V2Ray... ${Font}"
-    if bash v2ray.sh --force; then
-        judge "V2Ray 升级"
-    else
-        echo -e "${Error} ${RedBG} V2Ray 升级失败 ${Font}"
-        cd /tmp || true
-        rm -rf "$tmp_dir"
-        return 1
-    fi
-
-    cd /tmp || true
-    rm -rf "$tmp_dir"
-
-    local new_ver
-    new_ver="$(${v2ray_bin_dir} version | head -n 1 | awk '{print $2}')"
-    echo -e "${OK} ${GreenBG} V2Ray 已升级至 ${new_ver} ${Font}"
 }
 
 singbox_arch() {
@@ -810,8 +697,8 @@ panel_geo_update() {
 
 panel_config_gen() {
     mkdir -p "${panel_conf_dir}" "${panel_db_dir}"
-    local v2ray_enabled="false" singbox_enabled="false"
-    [[ -s "${vmess_users_file}" ]] && v2ray_enabled="true"
+    local vmess_enabled="false" singbox_enabled="false"
+    [[ -s "${vmess_users_file}" ]] && vmess_enabled="true"
     # VMess 与 AnyTLS 都由 sing-box 承载，装了 sing-box 即视为启用
     [[ -f "${singbox_conf}" ]] && singbox_enabled="true"
     cat >"${panel_conf}" <<EOF
@@ -827,10 +714,9 @@ panel_config_gen() {
   "session_ttl_sec": 604800,
   "login_max_fails": 5,
   "login_lock_sec": 1800,
-  "v2ray": {
-    "enabled": ${v2ray_enabled},
+  "vmess": {
+    "enabled": ${vmess_enabled},
     "api_addr": "127.0.0.1:${panel_singbox_api_port}",
-    "access_log": "",
     "ws_access_log": "${nginx_ws_access_log}",
     "users_file": "${vmess_users_file}",
     "config_file": "${singbox_conf}",
@@ -975,9 +861,7 @@ panel_install() {
     nginx_ws_access_log_add
     panel_systemd
     singbox_v2rayapi_ensure
-    [[ -f "${v2ray_conf}" ]] && v2ray_conf_add
     [[ -f "${singbox_conf}" ]] && anytls_conf_add
-    systemctl restart sing-box >/dev/null 2>&1
     [[ -f "${singbox_systemd_file}" ]] && systemctl restart sing-box >/dev/null 2>&1
     systemctl enable panel >/dev/null 2>&1
     systemctl restart panel
@@ -1042,9 +926,7 @@ panel_update() {
         panel_session_secret_ensure
         nginx_ws_access_log_add
         singbox_v2rayapi_ensure
-        [[ -f "${v2ray_conf}" ]] && v2ray_conf_add
         [[ -f "${singbox_conf}" ]] && anytls_conf_add
-        systemctl restart sing-box >/dev/null 2>&1
         [[ -f "${singbox_systemd_file}" ]] && systemctl restart sing-box >/dev/null 2>&1
         systemctl start panel >/dev/null 2>&1
         if systemctl is-active --quiet panel; then
@@ -1065,7 +947,6 @@ panel_uninstall() {
     rm -f "${panel_bin_dir}"
     panel_nginx_location_del
     nginx_ws_access_log_del
-    [[ -f "${v2ray_conf}" ]] && v2ray_conf_add && systemctl restart sing-box >/dev/null 2>&1
     [[ -f "${singbox_conf}" ]] && anytls_conf_add && [[ -f "${singbox_systemd_file}" ]] && systemctl restart sing-box >/dev/null 2>&1
     systemctl restart nginx >/dev/null 2>&1
     systemctl daemon-reload
@@ -2285,410 +2166,8 @@ vmess_user_menu() {
     done
 }
 
-routing_load() {
-    block_cn=0
-    block_ads=0
-    block_bt=1
-    warp_mode="off"
-    if [[ -f "${routing_conf_file}" ]]; then
-        block_cn="$(grep '^block_cn=' "${routing_conf_file}" | head -1 | cut -d= -f2)"
-        block_ads="$(grep '^block_ads=' "${routing_conf_file}" | head -1 | cut -d= -f2)"
-        block_bt="$(grep '^block_bt=' "${routing_conf_file}" | head -1 | cut -d= -f2)"
-        warp_mode="$(grep '^warp_mode=' "${routing_conf_file}" | head -1 | cut -d= -f2)"
-    fi
-    [[ -z "${block_cn}" ]] && block_cn=0
-    [[ -z "${block_ads}" ]] && block_ads=0
-    [[ -z "${block_bt}" ]] && block_bt=1
-    [[ "${warp_mode}" != "all" && "${warp_mode}" != "user" ]] && warp_mode="off"
-}
-
-routing_save() {
-    mkdir -p /etc/v2ray
-    cat >"${routing_conf_file}" <<EOF
-block_cn=${block_cn}
-block_ads=${block_ads}
-block_bt=${block_bt}
-warp_mode=${warp_mode}
-EOF
-}
-
 _rules_first=1
 ROUTING_RULES=""
-
-_rules_append() {
-    if [[ ${_rules_first} -eq 1 ]]; then
-        _rules_first=0
-        ROUTING_RULES="$1"
-    else
-        ROUTING_RULES="${ROUTING_RULES},$1"
-    fi
-}
-
-routing_rules_gen() {
-    ROUTING_RULES=""
-    _rules_first=1
-
-    if [[ "${block_bt}" == "1" ]]; then
-        _rules_append '{"type":"field","protocol":["bittorrent"],"outboundTag":"blocked"}'
-    fi
-    if [[ "${block_ads}" == "1" ]]; then
-        _rules_append '{"type":"field","domains":["geosite:category-ads"],"outboundTag":"blocked"}'
-    fi
-    if [[ "${block_cn}" == "1" ]]; then
-        _rules_append '{"type":"field","domains":["geosite:cn"],"outboundTag":"blocked"}'
-        _rules_append '{"type":"field","ip":["geoip:cn"],"outboundTag":"blocked"}'
-    fi
-
-    local domains_json="" d first_d=1
-    if [[ -f "${block_domains_file}" ]]; then
-        while read -r d; do
-            [[ -z "${d}" ]] && continue
-            if [[ ${first_d} -eq 1 ]]; then first_d=0; else domains_json="${domains_json},"; fi
-            domains_json="${domains_json}\"domain:${d}\""
-        done <"${block_domains_file}"
-    fi
-    [[ -n "${domains_json}" ]] && _rules_append "{\"type\":\"field\",\"domains\":[${domains_json}],\"outboundTag\":\"blocked\"}"
-
-    local ips_json="" ip first_i=1
-    if [[ -f "${block_ips_file}" ]]; then
-        while read -r ip; do
-            [[ -z "${ip}" ]] && continue
-            if [[ ${first_i} -eq 1 ]]; then first_i=0; else ips_json="${ips_json},"; fi
-            ips_json="${ips_json}\"${ip}\""
-        done <"${block_ips_file}"
-    fi
-    [[ -n "${ips_json}" ]] && _rules_append "{\"type\":\"field\",\"ip\":[${ips_json}],\"outboundTag\":\"blocked\"}"
-
-    if [[ "${warp_mode}" == "all" ]]; then
-        _rules_append '{"type":"field","network":"tcp,udp","outboundTag":"warp"}'
-    elif [[ "${warp_mode}" == "user" ]]; then
-        local warp_users_json="" u first_u=1
-        if [[ -f "${warp_users_file}" ]]; then
-            while read -r u; do
-                [[ -z "${u}" ]] && continue
-                if [[ ${first_u} -eq 1 ]]; then first_u=0; else warp_users_json="${warp_users_json},"; fi
-                warp_users_json="${warp_users_json}\"${u}\""
-            done <"${warp_users_file}"
-        fi
-        [[ -n "${warp_users_json}" ]] && _rules_append "{\"type\":\"field\",\"user\":[${warp_users_json}],\"outboundTag\":\"warp\"}"
-    fi
-
-    echo "${ROUTING_RULES}"
-}
-
-routing_domain_strategy() {
-    if [[ "${block_cn}" == "1" ]] || [[ -s "${block_ips_file}" ]]; then
-        echo "IPIfNonMatch"
-    else
-        echo "AsIs"
-    fi
-}
-
-routing_sniffing_gen() {
-    if [[ "${block_bt}" == "1" ]]; then
-        echo '      "sniffing": { "enabled": true },'
-    fi
-}
-
-block_domain_list() {
-    echo -e "${OK} ${GreenBG} 当前屏蔽域名列表 ${Font}"
-    if [[ ! -f "${block_domains_file}" ]] || [[ ! -s "${block_domains_file}" ]]; then
-        echo -e "${Red} 无 ${Font}"
-        return 0
-    fi
-    local idx=0
-    while read -r d; do
-        [[ -z "${d}" ]] && continue
-        idx=$((idx + 1))
-        echo -e "${Green}${idx}.${Font} ${d}"
-    done <"${block_domains_file}"
-}
-
-block_domain_add() {
-    read -rp "请输入要屏蔽的域名（eg: example.com）:" domain_item
-    [[ -z "${domain_item}" ]] && return 1
-    if [[ "${domain_item}" =~ [[:space:]] ]]; then
-        echo -e "${Error} ${RedBG} 域名不能包含空格 ${Font}"
-        return 1
-    fi
-    mkdir -p /etc/v2ray
-    echo "${domain_item}" >>"${block_domains_file}"
-    v2ray_conf_add
-    systemctl restart sing-box
-    judge "屏蔽域名添加"
-}
-
-block_domain_del() {
-    if [[ ! -s "${block_domains_file}" ]]; then
-        echo -e "${Error} ${RedBG} 屏蔽域名列表为空 ${Font}"
-        return 1
-    fi
-    block_domain_list
-    read -rp "请输入要删除的域名:" del_domain
-    [[ -z "${del_domain}" ]] && return 1
-    sed -i "/^${del_domain}$/d" "${block_domains_file}"
-    v2ray_conf_add
-    systemctl restart sing-box
-    judge "屏蔽域名删除"
-}
-
-block_ip_list() {
-    echo -e "${OK} ${GreenBG} 当前屏蔽 IP 列表 ${Font}"
-    if [[ ! -f "${block_ips_file}" ]] || [[ ! -s "${block_ips_file}" ]]; then
-        echo -e "${Red} 无 ${Font}"
-        return 0
-    fi
-    local idx=0
-    while read -r ip_item; do
-        [[ -z "${ip_item}" ]] && continue
-        idx=$((idx + 1))
-        echo -e "${Green}${idx}.${Font} ${ip_item}"
-    done <"${block_ips_file}"
-}
-
-block_ip_add() {
-    read -rp "请输入要屏蔽的 IP 或 CIDR（eg: 1.2.3.4 或 10.0.0.0/8）:" ip_item
-    [[ -z "${ip_item}" ]] && return 1
-    if [[ "${ip_item}" =~ [[:space:]] ]]; then
-        echo -e "${Error} ${RedBG} IP 不能包含空格 ${Font}"
-        return 1
-    fi
-    mkdir -p /etc/v2ray
-    echo "${ip_item}" >>"${block_ips_file}"
-    v2ray_conf_add
-    systemctl restart sing-box
-    judge "屏蔽 IP 添加"
-}
-
-block_ip_del() {
-    if [[ ! -s "${block_ips_file}" ]]; then
-        echo -e "${Error} ${RedBG} 屏蔽 IP 列表为空 ${Font}"
-        return 1
-    fi
-    block_ip_list
-    read -rp "请输入要删除的 IP 或 CIDR:" del_ip
-    [[ -z "${del_ip}" ]] && return 1
-    sed -i "/^${del_ip}$/d" "${block_ips_file}"
-    v2ray_conf_add
-    systemctl restart sing-box
-    judge "屏蔽 IP 删除"
-}
-
-block_domain_menu() {
-    while true; do
-        clear_screen
-        echo -e "\t 禁止自定义域名"
-        echo -e "${Green}1.${Font} 查看屏蔽域名列表"
-        echo -e "${Green}2.${Font} 添加屏蔽域名"
-        echo -e "${Green}3.${Font} 删除屏蔽域名"
-        echo -e "${Green}0.${Font} 返回上级菜单 \n"
-        read -rp "请输入数字：" bd_num
-        case ${bd_num} in
-        1)
-            block_domain_list
-            ;;
-        2)
-            block_domain_add
-            ;;
-        3)
-            block_domain_del
-            ;;
-        0)
-            break
-            ;;
-        *)
-            echo -e "${RedBG}请输入正确的数字${Font}"
-            ;;
-        esac
-        pause_continue
-    done
-}
-
-block_ip_menu() {
-    while true; do
-        clear_screen
-        echo -e "\t 禁止自定义 IP"
-        echo -e "${Green}1.${Font} 查看屏蔽 IP 列表"
-        echo -e "${Green}2.${Font} 添加屏蔽 IP"
-        echo -e "${Green}3.${Font} 删除屏蔽 IP"
-        echo -e "${Green}0.${Font} 返回上级菜单 \n"
-        read -rp "请输入数字：" bi_num
-        case ${bi_num} in
-        1)
-            block_ip_list
-            ;;
-        2)
-            block_ip_add
-            ;;
-        3)
-            block_ip_del
-            ;;
-        0)
-            break
-            ;;
-        *)
-            echo -e "${RedBG}请输入正确的数字${Font}"
-            ;;
-        esac
-        pause_continue
-    done
-}
-
-warp_user_list() {
-    echo -e "${OK} ${GreenBG} 当前 WARP 用户列表（仅 user 模式生效）${Font}"
-    if [[ ! -f "${warp_users_file}" ]] || [[ ! -s "${warp_users_file}" ]]; then
-        echo -e "${Red} 无 ${Font}"
-        return 0
-    fi
-    local idx=0
-    while read -r u; do
-        [[ -z "${u}" ]] && continue
-        idx=$((idx + 1))
-        echo -e "${Green}${idx}.${Font} ${u}"
-    done <"${warp_users_file}"
-}
-
-warp_user_add() {
-    read -rp "请输入要走 WARP 的用户名（需与 VMess 用户名一致）:" warp_user
-    [[ -z "${warp_user}" ]] && return 1
-    if [[ "${warp_user}" =~ [[:space:]] ]]; then
-        echo -e "${Error} ${RedBG} 用户名不能包含空格 ${Font}"
-        return 1
-    fi
-    mkdir -p /etc/v2ray
-    echo "${warp_user}" >>"${warp_users_file}"
-    v2ray_conf_add
-    systemctl restart sing-box
-    judge "WARP 用户添加"
-}
-
-warp_user_del() {
-    if [[ ! -s "${warp_users_file}" ]]; then
-        echo -e "${Error} ${RedBG} WARP 用户列表为空 ${Font}"
-        return 1
-    fi
-    warp_user_list
-    read -rp "请输入要删除的用户名:" del_user
-    [[ -z "${del_user}" ]] && return 1
-    sed -i "/^${del_user}$/d" "${warp_users_file}"
-    v2ray_conf_add
-    systemctl restart sing-box
-    judge "WARP 用户删除"
-}
-
-warp_user_menu() {
-    while true; do
-        clear_screen
-        echo -e "\t 管理 WARP 用户"
-        echo -e "${Green}1.${Font} 查看 WARP 用户列表"
-        echo -e "${Green}2.${Font} 添加 WARP 用户"
-        echo -e "${Green}3.${Font} 删除 WARP 用户"
-        echo -e "${Green}0.${Font} 返回上级菜单 \n"
-        read -rp "请输入数字：" wu_num
-        case ${wu_num} in
-        1)
-            warp_user_list
-            ;;
-        2)
-            warp_user_add
-            ;;
-        3)
-            warp_user_del
-            ;;
-        0)
-            break
-            ;;
-        *)
-            echo -e "${RedBG}请输入正确的数字${Font}"
-            ;;
-        esac
-        pause_continue
-    done
-}
-
-routing_menu() {
-    if [[ ! -f ${v2ray_qr_config_file} ]]; then
-        echo -e "${Error} ${RedBG} V2Ray 未安装，请先安装 ${Font}"
-        pause_continue
-        return 1
-    fi
-    while true; do
-        clear_screen
-        routing_load
-        local cn_s="关" ads_s="关" bt_s="关" warp_s="off(直连)"
-        [[ "${block_cn}" == "1" ]] && cn_s="开"
-        [[ "${block_ads}" == "1" ]] && ads_s="开"
-        [[ "${block_bt}" == "1" ]] && bt_s="开"
-        [[ "${warp_mode}" == "all" ]] && warp_s="all(全量WARP)"
-        [[ "${warp_mode}" == "user" ]] && warp_s="user(指定用户)"
-        echo -e "\t 路由规则（屏蔽）"
-        echo -e "${Green}1.${Font} 禁止国内地址  [${cn_s}]"
-        echo -e "${Green}2.${Font} 禁止广告地址  [${ads_s}]"
-        echo -e "${Green}3.${Font} 禁止 BT 协议  [${bt_s}]"
-        echo -e "${Green}4.${Font} 禁止自定义域名"
-        echo -e "${Green}5.${Font} 禁止自定义 IP"
-        echo -e "${Green}6.${Font} WARP 出站模式  [${warp_s}]"
-        echo -e "${Green}7.${Font} 管理 WARP 用户"
-        echo -e "${Green}0.${Font} 返回上级菜单 \n"
-        read -rp "请输入数字：" routing_num
-        case ${routing_num} in
-        1)
-            if [[ "${block_cn}" == "1" ]]; then block_cn=0; else block_cn=1; fi
-            routing_save
-            v2ray_conf_add
-            systemctl restart sing-box
-            judge "禁止国内地址 切换"
-            ;;
-        2)
-            if [[ "${block_ads}" == "1" ]]; then block_ads=0; else block_ads=1; fi
-            routing_save
-            v2ray_conf_add
-            systemctl restart sing-box
-            judge "禁止广告地址 切换"
-            ;;
-        3)
-            if [[ "${block_bt}" == "1" ]]; then block_bt=0; else block_bt=1; fi
-            routing_save
-            v2ray_conf_add
-            systemctl restart sing-box
-            judge "禁止 BT 协议 切换"
-            ;;
-        4)
-            block_domain_menu
-            continue
-            ;;
-        5)
-            block_ip_menu
-            continue
-            ;;
-        6)
-            case "${warp_mode}" in
-            off) warp_mode="all" ;;
-            all) warp_mode="user" ;;
-            *) warp_mode="off" ;;
-            esac
-            if [[ "${warp_mode}" != "off" ]] && ! warp_installed; then
-                echo -e "${Error} ${RedBG} WARP 未安装，请先在「安装与升级 → WARP」中安装，否则出站将失败 ${Font}"
-            fi
-            routing_save
-            v2ray_conf_add
-            systemctl restart sing-box
-            judge "WARP 出站模式 切换"
-            ;;
-        7)
-            warp_user_menu
-            continue
-            ;;
-        0)
-            break
-            ;;
-        *)
-            echo -e "${RedBG}请输入正确的数字${Font}"
-            ;;
-        esac
-        pause_continue
-    done
-}
 
 # 原 v2ray_conf_add 已删除：VMess 现由 sing-box 承载，
 # v2ray_conf_add 是 singbox_conf_add 的别名（见文件上方定义）。
@@ -2787,22 +2266,6 @@ stop_process_systemd() {
     systemctl stop nginx
     [[ -f ${singbox_systemd_file} ]] && systemctl stop sing-box
 }
-nginx_process_disabled() {
-    [ -f $nginx_systemd_file ] && systemctl stop nginx && systemctl disable nginx
-}
-
-#debian 系 9 10 适配
-#rc_local_initialization(){
-#    if [[ -f /etc/rc.local ]];then
-#        chmod +x /etc/rc.local
-#    else
-#        touch /etc/rc.local && chmod +x /etc/rc.local
-#        echo "#!/bin/bash" >> /etc/rc.local
-#        systemctl start rc-local
-#    fi
-#
-#    judge "rc.local 配置"
-#}
 
 acme_cron_update() {
     wget -N -P /usr/bin --no-check-certificate "https://raw.githubusercontent.com/layfu/vmess_ws-tls_bash_onekey/${github_branch}/ssl_update.sh"
@@ -2958,14 +2421,6 @@ tls_type() {
     fi
 }
 
-show_access_log() {
-    [ -f ${v2ray_access_log} ] && tail -f ${v2ray_access_log} || echo -e "${RedBG}log文件不存在${Font}"
-}
-
-show_error_log() {
-    [ -f ${v2ray_error_log} ] && tail -f ${v2ray_error_log} || echo -e "${RedBG}log文件不存在${Font}"
-}
-
 show_singbox_log() {
     [[ -f ${singbox_conf} ]] || { echo -e "${Error} ${RedBG} AnyTLS 未安装，请先安装 ${Font}"; return 1; }
     if [[ -f "${singbox_log_file}" ]]; then
@@ -2981,99 +2436,8 @@ ssl_update_manuel() {
     "$HOME"/.acme.sh/acme.sh --installcert -d "${domain}" --fullchainpath /data/v2ray.crt --keypath /data/v2ray.key --ecc
 }
 
-update_dat() {
-    local dat_path='/usr/local/lib/v2ray/'
-
-    if [[ ! -f "${v2ray_bin_dir}" ]] && [[ ! -f "${v2ray_bin_dir_old}/v2ray" ]]; then
-        echo -e "${Error} ${RedBG} V2Ray 未安装，请先安装 V2Ray ${Font}"
-        return 1
-    fi
-
-    local dir_tmp
-    dir_tmp="$(mktemp -d)"
-
-    echo -e "${OK} ${GreenBG} 正在下载 geoip.dat ${Font}"
-    if ! curl -L -q --retry 5 --retry-delay 10 --retry-max-time 60 \
-        -o "${dir_tmp}/geoip.dat" \
-        "https://github.com/v2fly/geoip/releases/latest/download/geoip.dat"; then
-        echo -e "${Error} ${RedBG} geoip.dat 下载失败 ${Font}"
-        rm -rf "${dir_tmp}"
-        return 1
-    fi
-
-    echo -e "${OK} ${GreenBG} 正在下载 geosite.dat ${Font}"
-    if ! curl -L -q --retry 5 --retry-delay 10 --retry-max-time 60 \
-        -o "${dir_tmp}/dlc.dat" \
-        "https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat"; then
-        echo -e "${Error} ${RedBG} geosite.dat 下载失败 ${Font}"
-        rm -rf "${dir_tmp}"
-        return 1
-    fi
-
-    echo -e "${OK} ${GreenBG} 正在验证校验和 ${Font}"
-    if ! curl -L -q --retry 5 --retry-delay 10 --retry-max-time 60 \
-        -o "${dir_tmp}/geoip.dat.sha256sum" \
-        "https://github.com/v2fly/geoip/releases/latest/download/geoip.dat.sha256sum"; then
-        echo -e "${Error} ${RedBG} geoip.dat sha256sum 下载失败 ${Font}"
-        rm -rf "${dir_tmp}"
-        return 1
-    fi
-    if ! curl -L -q --retry 5 --retry-delay 10 --retry-max-time 60 \
-        -o "${dir_tmp}/dlc.dat.sha256sum" \
-        "https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat.sha256sum"; then
-        echo -e "${Error} ${RedBG} geosite.dat sha256sum 下载失败 ${Font}"
-        rm -rf "${dir_tmp}"
-        return 1
-    fi
-
-    (
-        cd "${dir_tmp}" || exit 1
-        if ! sha256sum -c "geoip.dat.sha256sum"; then
-            echo -e "${Error} ${RedBG} geoip.dat 校验失败 ${Font}"
-            exit 1
-        fi
-        if ! sha256sum -c "dlc.dat.sha256sum"; then
-            echo -e "${Error} ${RedBG} geosite.dat 校验失败 ${Font}"
-            exit 1
-        fi
-    ) || {
-        rm -rf "${dir_tmp}"
-        return 1
-    }
-
-    install -d "${dat_path}"
-    systemctl stop v2ray
-    install -m 644 "${dir_tmp}/geoip.dat" "${dat_path}geoip.dat"
-    install -m 644 "${dir_tmp}/dlc.dat" "${dat_path}geosite.dat"
-    systemctl start v2ray
-    judge "geoip.dat geosite.dat 更新"
-
-    rm -rf "${dir_tmp}"
-}
-
 uninstall_all() {
     local uninstalled_any=0
-    if [[ -f $v2ray_bin_dir || -d $v2ray_bin_dir_old || -f $v2ray_systemd_file ]]; then
-        echo -e "${OK} ${Green} 是否卸载 V2Ray [Y/N]? ${Font}"
-        read -r uninstall_v2ray
-        case $uninstall_v2ray in
-        [yY][eE][sS] | [yY])
-            systemctl disable v2ray >/dev/null 2>&1
-            systemctl stop v2ray >/dev/null 2>&1
-            rm -f $v2ray_systemd_file
-            rm -f $v2ray_bin_dir
-            rm -f $v2ctl_bin_dir
-            rm -rf $v2ray_bin_dir_old
-            rm -rf $v2ray_conf_dir
-            rm -rf $web_dir
-            rm -f $v2ray_qr_config_file
-            uninstalled_any=1
-            echo -e "${OK} ${Green} 已卸载 V2Ray ${Font}"
-            ;;
-        *) ;;
-
-        esac
-    fi
     if [[ -d $nginx_dir ]]; then
         echo -e "${OK} ${Green} 是否卸载 Nginx [Y/N]? ${Font}"
         read -r uninstall_nginx
@@ -3281,11 +2645,6 @@ update_sh() {
     fi
 
 }
-maintain() {
-    echo -e "${RedBG}该选项暂时无法使用${Font}"
-    echo -e "${RedBG}$1${Font}"
-    exit 0
-}
 warp_installed() {
     [[ -x /usr/bin/warp-cli ]] && return 0
     return 1
@@ -3437,12 +2796,6 @@ list() {
         ;;
     crontab_modify)
         acme_cron_update
-        ;;
-    dat_update)
-        update_dat
-        ;;
-    v2ray_update)
-        v2ray_update
         ;;
     singbox_update)
         singbox_update
@@ -3907,7 +3260,7 @@ menu() {
         clear_screen
         show_header
         echo -e "${Green}1.${Font} 安装与升级"
-        echo -e "${Green}2.${Font} V2Ray 配置"
+        echo -e "${Green}2.${Font} VMess 配置"
         echo -e "${Green}3.${Font} AnyTLS 配置"
         echo -e "${Green}4.${Font} 查看信息"
         echo -e "${Green}5.${Font} 证书"
@@ -3955,14 +3308,13 @@ install_menu() {
         clear_screen
         section_title "安装与升级"
         echo -e "${Green}1.${Font} 安装 VMess (Nginx+ws+tls, sing-box 内核)"
-        echo -e "${Green}2.${Font} 升级 V2Ray (已弃用)"
-        echo -e "${Green}3.${Font} 安装 AnyTLS (sing-box)"
-        echo -e "${Green}4.${Font} 升级 sing-box"
-        echo -e "${Green}5.${Font} 升级 Nginx"
-        echo -e "${Green}6.${Font} 安装/卸载 WARP"
-        echo -e "${Green}7.${Font} 安装 流量面板"
-        echo -e "${Green}8.${Font} 升级 流量面板"
-        echo -e "${Green}9.${Font} 更新 sing-box (v2ray_api)"
+        echo -e "${Green}2.${Font} 安装 AnyTLS (sing-box)"
+        echo -e "${Green}3.${Font} 升级 sing-box"
+        echo -e "${Green}4.${Font} 升级 Nginx"
+        echo -e "${Green}5.${Font} 安装/卸载 WARP"
+        echo -e "${Green}6.${Font} 安装 流量面板"
+        echo -e "${Green}7.${Font} 升级 流量面板"
+        echo -e "${Green}8.${Font} 更新 sing-box (v2ray_api)"
         echo -e "${Green}0.${Font} 返回上级菜单 \n"
         read -rp "请输入数字：" sub_num
         case ${sub_num} in
@@ -3971,28 +3323,25 @@ install_menu() {
             install_v2ray_ws_tls
             ;;
         2)
-            echo -e "${Error} ${RedBG} 已弃用：VMess 现由 sing-box 承载，请使用「升级 sing-box」 ${Font}"
-            ;;
-        3)
             install_anytls
             ;;
-        4)
+        3)
             singbox_update
             ;;
-        5)
+        4)
             nginx_upgrade
             ;;
-        6)
+        5)
             warp_menu
             continue
             ;;
-        7)
+        6)
             panel_install
             ;;
-        8)
+        7)
             panel_update
             ;;
-        9)
+        8)
             singbox_v2rayapi_update
             ;;
         0)
@@ -4009,7 +3358,7 @@ install_menu() {
 v2ray_config_menu() {
     while true; do
         clear_screen
-        section_title "V2Ray 配置"
+        section_title "VMess 配置"
         echo -e "${Green}1.${Font} 管理 VMess 用户"
         echo -e "${Green}2.${Font} 变更 端口"
         echo -e "${Green}3.${Font} 变更 TLS 版本(仅ws+tls有效)"
@@ -4088,11 +3437,9 @@ view_menu() {
     while true; do
         clear_screen
         section_title "查看信息"
-        echo -e "${Green}1.${Font} 查看 V2Ray 配置信息"
+        echo -e "${Green}1.${Font} 查看 VMess 配置信息"
         echo -e "${Green}2.${Font} 查看 AnyTLS 配置信息"
-        echo -e "${Green}3.${Font} 查看 V2Ray 实时访问日志"
-        echo -e "${Green}4.${Font} 查看 V2Ray 实时错误日志"
-        echo -e "${Green}5.${Font} 查看 AnyTLS 实时日志"
+        echo -e "${Green}3.${Font} 查看实时日志"
         echo -e "${Green}0.${Font} 返回上级菜单 \n"
         read -rp "请输入数字：" sub_num
         case ${sub_num} in
@@ -4103,12 +3450,6 @@ view_menu() {
             surge_config_output
             ;;
         3)
-            show_access_log
-            ;;
-        4)
-            show_error_log
-            ;;
-        5)
             show_singbox_log
             ;;
         0)
@@ -4182,11 +3523,10 @@ panel_traffic_reset() {
     fi
     systemctl stop panel >/dev/null 2>&1
     # 注意：不清 counters（增量基线），否则下一轮会把累计值当增量写入产生尖峰。
-    # 逐表删除并跳过不存在的表（旧版本可能还没有 inbound_hourly / outbound_hourly）。
     # user_target_traffic 是路由拓扑目标层的数据源，user_outbound_hourly 是出口层数据源，
     # connections 提供封禁目标，都要清；clash_conn 是轮询基线，不能清（否则会重复计数）。
     local t ok=1
-    for t in hourly totals target_traffic user_target_traffic user_outbound_hourly outbound_hourly inbound_hourly connections; do
+    for t in hourly totals user_target_traffic user_outbound_hourly connections; do
         if [[ "$(sqlite3 "${panel_db}" "SELECT name FROM sqlite_master WHERE type='table' AND name='${t}';" 2>/dev/null)" == "${t}" ]]; then
             sqlite3 "${panel_db}" "DELETE FROM ${t};" 2>/dev/null || ok=0
         fi
@@ -4204,12 +3544,11 @@ other_menu() {
         clear_screen
         section_title "其他"
         echo -e "${Green}1.${Font} 卸载"
-        echo -e "${Green}2.${Font} 更新 geoip.dat 和 geosite.dat"
-        echo -e "${Green}3.${Font} 更新 sing-box 规则集"
-        echo -e "${Green}4.${Font} 升级 脚本"
-        echo -e "${Green}5.${Font} 修改 面板密码"
-        echo -e "${Green}6.${Font} 更新 IP 归属地数据库"
-        echo -e "${Green}7.${Font} 清空流量统计"
+        echo -e "${Green}2.${Font} 更新 sing-box 规则集"
+        echo -e "${Green}3.${Font} 升级 脚本"
+        echo -e "${Green}4.${Font} 修改 面板密码"
+        echo -e "${Green}5.${Font} 更新 IP 归属地数据库"
+        echo -e "${Green}6.${Font} 清空流量统计"
         echo -e "${Green}0.${Font} 返回上级菜单 \n"
         read -rp "请输入数字：" sub_num
         case ${sub_num} in
@@ -4218,15 +3557,12 @@ other_menu() {
             uninstall_all
             ;;
         2)
-            update_dat
-            ;;
-        3)
             singbox_geodata_update
             ;;
-        4)
+        3)
             update_sh
             ;;
-        5)
+        4)
             if panel_installed; then
                 panel_auth_set
                 panel_session_secret_ensure
@@ -4235,10 +3571,10 @@ other_menu() {
                 echo -e "${Error} ${RedBG} 面板未安装 ${Font}"
             fi
             ;;
-        6)
+        5)
             panel_geo_update
             ;;
-        7)
+        6)
             panel_traffic_reset
             ;;
         0)

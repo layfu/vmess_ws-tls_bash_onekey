@@ -57,41 +57,6 @@ func TestParseQueryStatsResponse(t *testing.T) {
 	}
 }
 
-func TestParseV2rayLine(t *testing.T) {
-	line := "2026/08/27 12:00:00 1.2.3.4:54321 accepted tcp:example.com:443 [direct] email: user1"
-	p, u, src, dst, status, ts, ok := parseV2rayLine(line)
-	if !ok {
-		t.Fatalf("expected ok")
-	}
-	if p != "vmess" || u != "user1" || src != "1.2.3.4:54321" || dst != "example.com:443" || status != "direct" {
-		t.Errorf("got %q %q %q %q %q", p, u, src, dst, status)
-	}
-	if ts <= 0 {
-		t.Errorf("expected positive timestamp, got %d", ts)
-	}
-
-	blocked := "2026/08/27 12:00:00 1.2.3.4:54321 accepted tcp:example.com:443 [blocked] email: user1"
-	_, _, _, _, status, _, ok = parseV2rayLine(blocked)
-	if !ok || status != "blocked" {
-		t.Errorf("expected blocked status, got %q %v", status, ok)
-	}
-
-	rej := "2026/08/27 12:00:00 5.6.7.8:9999 rejected  email: user2"
-	if _, _, _, _, _, _, ok := parseV2rayLine(rej); ok {
-		t.Errorf("rejected line should not be accepted")
-	}
-
-	// 面板自身轮询统计接口产生的内部连接：无 email、tag 为 api、目标是回环。
-	api := "2026/09/12 17:18:55 127.0.0.1:36464 accepted tcp:127.0.0.1:0 [api]"
-	if _, _, _, _, _, _, ok := parseV2rayLine(api); ok {
-		t.Errorf("api inbound line should be skipped")
-	}
-	loopback := "2026/09/12 17:18:55 127.0.0.1:36464 accepted tcp:127.0.0.1:8080 [direct]"
-	if _, _, _, _, _, _, ok := parseV2rayLine(loopback); ok {
-		t.Errorf("loopback target should be skipped")
-	}
-}
-
 func TestParseNginxWsLine(t *testing.T) {
 	line := "1.2.3.4 2026-08-27T12:00:00+08:00 /e01ec5ea/ 101"
 	ip, ts, ok := parseNginxWsLine(line)
@@ -645,21 +610,5 @@ func TestUserTargetTraffic(t *testing.T) {
 	}
 	if r := byUser["alice"]; r.Uplink != 11 || r.Downlink != 22 || r.Host != "a.com" || r.Status != "direct" {
 		t.Errorf("alice row = %+v", r)
-	}
-
-	// the aggregate view collapses users
-	trows, err := st.targetTraffic(base.Unix())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(trows) != 2 {
-		t.Fatalf("target rows = %+v", trows)
-	}
-	var total int64
-	for _, r := range trows {
-		total += r.Uplink + r.Downlink
-	}
-	if total != 43 {
-		t.Errorf("aggregate total = %d, want 43", total)
 	}
 }

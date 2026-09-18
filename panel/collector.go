@@ -11,11 +11,10 @@ import (
 )
 
 type protoSource struct {
-	protocol     string
-	source       *statsSource
-	usersFile    string
-	users        []string
-	readOutbound bool
+	protocol  string
+	source    *statsSource
+	usersFile string
+	users     []string
 }
 
 type collector struct {
@@ -48,12 +47,12 @@ func newCollector(st *store, cfg *Config, onlineWindow int) (*collector, error) 
 		online:   onlineWindow,
 	}
 
-	if cfg.V2Ray.Enabled && cfg.V2Ray.APIAddr != "" {
-		src, err := newStatsSource(cfg.V2Ray.APIAddr)
+	if cfg.VMess.Enabled && cfg.VMess.APIAddr != "" {
+		src, err := newStatsSource(cfg.VMess.APIAddr)
 		if err != nil {
-			log.Printf("v2ray stats api %s: %v", cfg.V2Ray.APIAddr, err)
+			log.Printf("vmess stats api %s: %v", cfg.VMess.APIAddr, err)
 		} else {
-			c.sources = append(c.sources, &protoSource{protocol: "vmess", source: src, usersFile: cfg.V2Ray.UsersFile})
+			c.sources = append(c.sources, &protoSource{protocol: "vmess", source: src, usersFile: cfg.VMess.UsersFile})
 		}
 	}
 	// sing-box 同时承载 VMess 与 AnyTLS，只要配置了统计地址就采集（用户文件为空则跳过）。
@@ -64,12 +63,6 @@ func newCollector(st *store, cfg *Config, onlineWindow int) (*collector, error) 
 		} else {
 			c.sources = append(c.sources, &protoSource{protocol: "anytls", source: src, usersFile: cfg.SingBox.UsersFile})
 		}
-	}
-
-	// outbound 统计是全局的（不区分协议/用户），两个 stats 源指向同一个 API，
-	// 只让其中一个源读取，避免重复计数。
-	if len(c.sources) > 0 {
-		c.sources[0].readOutbound = true
 	}
 
 	m, err := st.loadCounters()
@@ -103,7 +96,7 @@ func (c *collector) run(ctx context.Context, interval time.Duration) {
 func (c *collector) poll(ctx context.Context) {
 	for _, ps := range c.sources {
 		ps.users = readUsers(ps.usersFile, ps.users)
-		if len(ps.users) == 0 && !ps.readOutbound {
+		if len(ps.users) == 0 {
 			continue
 		}
 		pctx, cancel := context.WithTimeout(ctx, 8*time.Second)
@@ -142,46 +135,11 @@ func (c *collector) poll(ctx context.Context) {
 			_ = c.store.saveCounter(ps.protocol, user, "down", down)
 			c.collectUserOutbound(counters, ps.protocol, user, statUser, now)
 		}
-		if ps.readOutbound {
-			c.collectOutbound(counters, now)
-			c.collectInbound(counters, now)
-		}
 	}
 }
 
 // outboundTags are the sing-box outbound tags tracked via the v2ray_api stats.
 var outboundTags = []string{"direct", "block", "warp"}
-
-// collectOutbound records per-outbound byte deltas (accurate, same source as
-// the per-user stats) so the topology's outbound layer matches the totals.
-func (c *collector) collectOutbound(counters map[string]int64, now time.Time) {
-	hour := now.Truncate(time.Hour).Unix()
-	for _, tag := range outboundTags {
-		up := counters["outbound>>>"+tag+">>>traffic>>>uplink"]
-		down := counters["outbound>>>"+tag+">>>traffic>>>downlink"]
-		c.mu.Lock()
-		lastUp := c.counters["outbound|"+tag+"|up"]
-		lastDown := c.counters["outbound|"+tag+"|down"]
-		dUp := up - lastUp
-		dDown := down - lastDown
-		if dUp < 0 {
-			dUp = up
-		}
-		if dDown < 0 {
-			dDown = down
-		}
-		c.counters["outbound|"+tag+"|up"] = up
-		c.counters["outbound|"+tag+"|down"] = down
-		c.mu.Unlock()
-		if dUp != 0 || dDown != 0 {
-			if err := c.store.addOutboundTraffic(tag, hour, dUp, dDown); err != nil {
-				log.Printf("store addOutboundTraffic: %v", err)
-			}
-		}
-		_ = c.store.saveCounter("outbound", tag, "up", up)
-		_ = c.store.saveCounter("outbound", tag, "down", down)
-	}
-}
 
 // collectUserOutbound records the exact per-(user, protocol, outbound) byte
 // deltas from the custom user_outbound>>> counter. On binaries without the
@@ -219,46 +177,8 @@ func (c *collector) collectUserOutbound(counters map[string]int64, protocol, use
 	}
 }
 
-// inboundTagProtocol maps the sing-box inbound tags to protocols, so the
-// topology's protocol layer is measured accurately per protocol (the per-user
-// stats are shared by name across protocols and can't be split).
-var inboundTagProtocol = []struct{ tag, protocol string }{
-	{"vmess-in", "vmess"},
-	{"anytls-in", "anytls"},
-}
-
-// collectInbound records per-protocol byte deltas from the inbound stats.
-func (c *collector) collectInbound(counters map[string]int64, now time.Time) {
-	hour := now.Truncate(time.Hour).Unix()
-	for _, it := range inboundTagProtocol {
-		up := counters["inbound>>>"+it.tag+">>>traffic>>>uplink"]
-		down := counters["inbound>>>"+it.tag+">>>traffic>>>downlink"]
-		c.mu.Lock()
-		lastUp := c.counters["inbound|"+it.protocol+"|up"]
-		lastDown := c.counters["inbound|"+it.protocol+"|down"]
-		dUp := up - lastUp
-		dDown := down - lastDown
-		if dUp < 0 {
-			dUp = up
-		}
-		if dDown < 0 {
-			dDown = down
-		}
-		c.counters["inbound|"+it.protocol+"|up"] = up
-		c.counters["inbound|"+it.protocol+"|down"] = down
-		c.mu.Unlock()
-		if dUp != 0 || dDown != 0 {
-			if err := c.store.addInboundTraffic(it.protocol, hour, dUp, dDown); err != nil {
-				log.Printf("store addInboundTraffic: %v", err)
-			}
-		}
-		_ = c.store.saveCounter("inbound", it.protocol, "up", up)
-		_ = c.store.saveCounter("inbound", it.protocol, "down", down)
-	}
-}
-
 // readUsers returns the usernames from a users file. The file format is
-// "name <secret>" per line (same for v2ray uuid and sing-box password).
+// "name <secret>" per line (same for VMess UUID and sing-box password).
 func readUsers(path string, cached []string) []string {
 	if path == "" {
 		return cached

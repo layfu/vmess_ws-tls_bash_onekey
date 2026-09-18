@@ -44,7 +44,7 @@ type userSecret struct {
 func loadAllConfigs(cfg *Config) []userConfig {
 	anytlsDomain := readDomain(cfg.SingBox.DomainFile)
 	var out []userConfig
-	out = append(out, loadVmessConfigs(cfg.V2Ray, anytlsDomain)...)
+	out = append(out, loadVmessConfigs(cfg.VMess, anytlsDomain)...)
 	out = append(out, loadAnyTLSConfigs(cfg.SingBox, anytlsDomain)...)
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Protocol != out[j].Protocol {
@@ -111,7 +111,7 @@ func loadQr(path string) qrConf {
 	return q
 }
 
-func v2rayWSPath(path string) string {
+func vmessWSPath(path string) string {
 	if path == "" {
 		return ""
 	}
@@ -206,7 +206,7 @@ func isSelfSignedCert(path string) bool {
 }
 
 // anytlsSkipCertCheck returns "是" when the AnyTLS certificate is self-signed,
-// "否" when it is a reused (e.g. Let's Encrypt) v2ray certificate.
+// "否" when it is a reused (e.g. Let's Encrypt) certificate.
 func anytlsSkipCertCheck(configPath string) string {
 	certPath := singboxCertPath(configPath)
 	if certPath == "" || !isSelfSignedCert(certPath) {
@@ -236,7 +236,7 @@ func loadVmessConfigs(p ProtocolConfig, fallbackDomain string) []userConfig {
 	}
 	path := qr.Path
 	if path == "" {
-		path = v2rayWSPath(p.ConfigFile)
+		path = vmessWSPath(p.ConfigFile)
 	}
 	out := make([]userConfig, 0, len(users))
 	for _, u := range users {

@@ -4,22 +4,12 @@ import (
 	"bufio"
 	"io"
 	"log"
-	"net"
-	"net/netip"
 	"os"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
 )
-
-// v2ray access log line:
-//
-//	2006/01/02 15:04:05 1.2.3.4:12345 accepted tcp:example.com:443 [detour] email: user1
-//
-// detour is the outbound tag: direct / warp / blocked.
-var v2rayRe = regexp.MustCompile(`^(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2})\s+(\S+)\s+(accepted|rejected)\s+(\S+)(?:\s+\[([^\]]+)\])?`)
-var v2rayEmailRe = regexp.MustCompile(`email:\s*(\S+)`)
 
 // sing-box info log line for an AnyTLS inbound connection:
 //
@@ -31,56 +21,6 @@ var v2rayEmailRe = regexp.MustCompile(`email:\s*(\S+)`)
 var sbIDRe = regexp.MustCompile(`\[(\d+)\s+\S+\]`)
 var sbInboundRe = regexp.MustCompile(`(?:\[([^\]]+)\]\s+)?inbound connection (?:from (\S+) )?to (\S+)`)
 var sbOutboundRe = regexp.MustCompile(`outbound/\S+\[([^\]]+)\]:\s+(outbound|blocked) connection to\s+\S+`)
-
-func parseV2rayLine(line string) (protocol, username, source, target, status string, ts int64, ok bool) {
-	m := v2rayRe.FindStringSubmatch(line)
-	if m == nil {
-		return "", "", "", "", "", 0, false
-	}
-	ts = parseV2rayTime(m[1])
-	source = m[2]
-	acc := m[3]
-	targetRaw := m[4]
-	if acc != "accepted" || targetRaw == "" {
-		return "", "", "", "", "", ts, false
-	}
-	target = stripNetPrefix(targetRaw)
-	if target == "" {
-		return "", "", "", "", "", ts, false
-	}
-	status = m[5]
-	// 面板自身轮询统计接口会连到 v2ray 的 api inbound，日志形如
-	// "127.0.0.1:xxx accepted tcp:127.0.0.1:0 [api]"，没有 email；这类内部
-	// 连接不是真实用户流量，丢弃以免污染「最近连接」和路由拓扑。
-	if status == "api" || isLoopbackTarget(target) {
-		return "", "", "", "", "", ts, false
-	}
-	if em := v2rayEmailRe.FindStringSubmatch(line); em != nil {
-		username = em[1]
-	}
-	return "vmess", username, source, target, status, ts, true
-}
-
-// isLoopbackTarget reports whether the target host is a loopback address.
-func isLoopbackTarget(target string) bool {
-	host := target
-	if h, _, err := net.SplitHostPort(target); err == nil {
-		host = h
-	}
-	host = strings.Trim(host, "[]")
-	ip, err := netip.ParseAddr(host)
-	return err == nil && ip.IsLoopback()
-}
-
-// parseV2rayTime parses the v2ray access log timestamp "2006/01/02 15:04:05"
-// (server local time) into a Unix timestamp.
-func parseV2rayTime(s string) int64 {
-	t, err := time.ParseInLocation("2006/01/02 15:04:05", s, time.Local)
-	if err != nil {
-		return time.Now().Unix()
-	}
-	return t.Unix()
-}
 
 // parseNginxWsLine parses a Nginx WebSocket access log line:
 //
@@ -218,26 +158,10 @@ func stripScheme(s string) string {
 	return s
 }
 
-func stripNetPrefix(s string) string {
-	if i := strings.IndexByte(s, ':'); i >= 0 {
-		return s[i+1:]
-	}
-	return s
-}
-
 func startLogTailers(st *store, cfg *Config) {
 	corr := newCorrelator(st)
-	if cfg.V2Ray.Enabled && cfg.V2Ray.AccessLog != "" {
-		go followFile(cfg.V2Ray.AccessLog, func(line string) {
-			p, u, src, dst, status, ts, ok := parseV2rayLine(line)
-			if ok {
-				_ = st.addConnection(p, u, src, dst, status, time.Unix(ts, 0))
-				corr.addVmess(ts, u, dst, src)
-			}
-		})
-	}
-	if cfg.V2Ray.Enabled && cfg.V2Ray.WSAccessLog != "" {
-		go followFile(cfg.V2Ray.WSAccessLog, func(line string) {
+	if cfg.VMess.Enabled && cfg.VMess.WSAccessLog != "" {
+		go followFile(cfg.VMess.WSAccessLog, func(line string) {
 			ip, ts, ok := parseNginxWsLine(line)
 			if ok {
 				corr.addWs(ts, ip)
