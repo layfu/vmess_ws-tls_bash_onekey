@@ -22,7 +22,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.9.38"
+shell_version="1.6.9.39"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -50,7 +50,7 @@ anytls_routing_conf_file="/etc/sing-box/routing.conf"
 anytls_block_domains_file="/etc/sing-box/block_domains"
 anytls_block_ips_file="/etc/sing-box/block_ips"
 anytls_port=""
-amce_sh_file="/root/.acme.sh/acme.sh"
+acme_sh_file="${HOME}/.acme.sh/acme.sh"
 ssl_update_file="/usr/bin/ssl_update.sh"
 nginx_version="1.30.4"
 openssl_version="3.5.7"
@@ -2431,9 +2431,13 @@ show_singbox_log() {
 }
 
 ssl_update_manuel() {
-    [ -f ${amce_sh_file} ] && "/root/.acme.sh"/acme.sh --cron --home "/root/.acme.sh" || echo -e "${RedBG}证书签发工具不存在，请确认你是否使用了自己的证书${Font}"
+    if [[ ! -f "${acme_sh_file}" ]]; then
+        echo -e "${RedBG}证书签发工具不存在，请确认你是否使用了自己的证书${Font}"
+        return 1
+    fi
+    "${acme_sh_file}" --cron --home "${HOME}/.acme.sh"
     domain="$(info_extraction '\"add\"')"
-    "$HOME"/.acme.sh/acme.sh --installcert -d "${domain}" --fullchainpath /data/v2ray.crt --keypath /data/v2ray.key --ecc
+    "${acme_sh_file}" --installcert -d "${domain}" --fullchainpath /data/v2ray.crt --keypath /data/v2ray.key --ecc
 }
 
 uninstall_all() {
@@ -2521,17 +2525,21 @@ uninstall_all() {
 
         esac
     fi
-    echo -e "${OK} ${Green} 是否卸载acme.sh及证书 [Y/N]? ${Font}"
-    read -r uninstall_acme
-    case $uninstall_acme in
-    [yY][eE][sS] | [yY])
-      /root/.acme.sh/acme.sh --uninstall
-      rm -rf /root/.acme.sh
-      rm -rf /data/v2ray.crt /data/v2ray.key
-      uninstalled_any=1
-      ;;
-    *) ;;
-    esac
+    if [[ -f "${acme_sh_file}" || -d "${HOME}/.acme.sh" || -f /data/v2ray.crt || -f /data/v2ray.key ]]; then
+        echo -e "${OK} ${Green} 是否卸载acme.sh及证书 [Y/N]? ${Font}"
+        read -r uninstall_acme
+        case $uninstall_acme in
+        [yY][eE][sS] | [yY])
+            [[ -f "${acme_sh_file}" ]] && "${acme_sh_file}" --uninstall >/dev/null 2>&1
+            rm -rf "${HOME}/.acme.sh"
+            rm -f /data/v2ray.crt /data/v2ray.key
+            uninstalled_any=1
+            echo -e "${OK} ${Green} 已卸载 acme.sh 及证书 ${Font}"
+            ;;
+        *) ;;
+
+        esac
+    fi
     systemctl daemon-reload
     if [[ "${uninstalled_any}" -eq 1 ]]; then
         echo -e "${OK} ${GreenBG} 已卸载 ${Font}"
@@ -2540,8 +2548,9 @@ uninstall_all() {
     fi
 }
 delete_tls_key_and_crt() {
-    [[ -f $HOME/.acme.sh/acme.sh ]] && /root/.acme.sh/acme.sh uninstall >/dev/null 2>&1
-    [[ -d $HOME/.acme.sh ]] && rm -rf "$HOME/.acme.sh"
+    [[ -f "${acme_sh_file}" ]] && "${acme_sh_file}" --uninstall >/dev/null 2>&1
+    rm -rf "${HOME}/.acme.sh"
+    rm -f /data/v2ray.crt /data/v2ray.key
     echo -e "${OK} ${GreenBG} 已清空证书遗留文件 ${Font}"
 }
 judge_mode() {
