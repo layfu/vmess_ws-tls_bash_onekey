@@ -22,7 +22,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.9.42"
+shell_version="1.6.9.43"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -34,7 +34,10 @@ v2ray_info_file="$HOME/v2ray_info.inf"
 v2ray_qr_config_file="/usr/local/vmess_qr.json"
 vmess_users_file="/etc/v2ray/users"
 warp_socks_port="40000"
-anytls_warp_users_file="/etc/sing-box/warp_users"
+vmess_routing_conf_file="/etc/sing-box/vmess_routing.conf"
+vmess_block_domains_file="/etc/sing-box/vmess_block_domains"
+vmess_block_ips_file="/etc/sing-box/vmess_block_ips"
+vmess_warp_users_file="/etc/sing-box/vmess_warp_users"
 warp_healthcheck_file="/usr/local/bin/warp-healthcheck.sh"
 warp_systemd_service="/etc/systemd/system/warp-healthcheck.service"
 warp_systemd_timer="/etc/systemd/system/warp-healthcheck.timer"
@@ -46,9 +49,15 @@ singbox_systemd_file="/etc/systemd/system/sing-box.service"
 anytls_info_file="$HOME/anytls_info.inf"
 anytls_domain_file="/etc/sing-box/domain"
 anytls_users_file="/etc/sing-box/users"
-anytls_routing_conf_file="/etc/sing-box/routing.conf"
-anytls_block_domains_file="/etc/sing-box/block_domains"
-anytls_block_ips_file="/etc/sing-box/block_ips"
+anytls_routing_conf_file="/etc/sing-box/anytls_routing.conf"
+anytls_block_domains_file="/etc/sing-box/anytls_block_domains"
+anytls_block_ips_file="/etc/sing-box/anytls_block_ips"
+anytls_warp_users_file="/etc/sing-box/anytls_warp_users"
+# 旧版共享路由文件（迁移用）
+legacy_routing_conf_file="/etc/sing-box/routing.conf"
+legacy_block_domains_file="/etc/sing-box/block_domains"
+legacy_block_ips_file="/etc/sing-box/block_ips"
+legacy_warp_users_file="/etc/sing-box/warp_users"
 anytls_port=""
 acme_sh_file="/root/.acme.sh/acme.sh"
 ssl_update_file="/usr/bin/ssl_update.sh"
@@ -1162,120 +1171,215 @@ anytls_user_menu() {
     done
 }
 
-anytls_routing_load() {
-    anytls_block_cn=0
-    anytls_block_ads=0
-    anytls_block_bt=1
-    anytls_warp_mode="off"
-    if [[ -f "${anytls_routing_conf_file}" ]]; then
-        anytls_block_cn="$(grep '^block_cn=' "${anytls_routing_conf_file}" | head -1 | cut -d= -f2)"
-        anytls_block_ads="$(grep '^block_ads=' "${anytls_routing_conf_file}" | head -1 | cut -d= -f2)"
-        anytls_block_bt="$(grep '^block_bt=' "${anytls_routing_conf_file}" | head -1 | cut -d= -f2)"
-        anytls_warp_mode="$(grep '^warp_mode=' "${anytls_routing_conf_file}" | head -1 | cut -d= -f2)"
-    fi
-    [[ -z "${anytls_block_cn}" ]] && anytls_block_cn=0
-    [[ -z "${anytls_block_ads}" ]] && anytls_block_ads=0
-    [[ -z "${anytls_block_bt}" ]] && anytls_block_bt=1
-    [[ "${anytls_warp_mode}" != "all" && "${anytls_warp_mode}" != "user" ]] && anytls_warp_mode="off"
+# 路由配置按协议独立存储：vmess / anytls 各一套。
+# 用变量间接引用（RT_<key>_<proto>）而非关联数组，兼容更旧的 bash。
+rt_get() {
+    local var="RT_${2}_${1}"
+    echo "${!var}"
+}
+rt_set() {
+    local var="RT_${2}_${1}"
+    printf -v "$var" '%s' "$3"
 }
 
-anytls_routing_save() {
+rt_protocols() { echo "vmess anytls"; }
+
+rt_conf_file() {
+    case "$1" in
+    vmess) echo "${vmess_routing_conf_file}" ;;
+    anytls) echo "${anytls_routing_conf_file}" ;;
+    esac
+}
+rt_domains_file() {
+    case "$1" in
+    vmess) echo "${vmess_block_domains_file}" ;;
+    anytls) echo "${anytls_block_domains_file}" ;;
+    esac
+}
+rt_ips_file() {
+    case "$1" in
+    vmess) echo "${vmess_block_ips_file}" ;;
+    anytls) echo "${anytls_block_ips_file}" ;;
+    esac
+}
+rt_users_file() {
+    case "$1" in
+    vmess) echo "${vmess_warp_users_file}" ;;
+    anytls) echo "${anytls_warp_users_file}" ;;
+    esac
+}
+rt_inbound_tag() {
+    case "$1" in
+    vmess) echo "vmess-in" ;;
+    anytls) echo "anytls-in" ;;
+    esac
+}
+rt_user_prefix() {
+    case "$1" in
+    vmess) echo "v:" ;;
+    anytls) echo "a:" ;;
+    esac
+}
+rt_label() {
+    case "$1" in
+    vmess) echo "VMess" ;;
+    anytls) echo "AnyTLS" ;;
+    esac
+}
+# 协议是否已安装（未安装则不生成其规则，避免引用不存在的 inbound tag）。
+rt_installed() {
+    case "$1" in
+    vmess) [[ -s "${vmess_users_file}" ]] ;;
+    anytls) [[ -s "${anytls_users_file}" ]] ;;
+    esac
+}
+
+# 首次加载时把旧版共享路由文件复制到两个协议，保持现有行为。
+rt_migrate_legacy() {
+    local p f
+    for p in $(rt_protocols); do
+        f="$(rt_conf_file "$p")"
+        [[ ! -f "${f}" && -f "${legacy_routing_conf_file}" ]] && cp -f "${legacy_routing_conf_file}" "${f}"
+        f="$(rt_domains_file "$p")"
+        [[ ! -f "${f}" && -f "${legacy_block_domains_file}" ]] && cp -f "${legacy_block_domains_file}" "${f}"
+        f="$(rt_ips_file "$p")"
+        [[ ! -f "${f}" && -f "${legacy_block_ips_file}" ]] && cp -f "${legacy_block_ips_file}" "${f}"
+        f="$(rt_users_file "$p")"
+        [[ ! -f "${f}" && -f "${legacy_warp_users_file}" ]] && cp -f "${legacy_warp_users_file}" "${f}"
+    done
+}
+
+rt_load() {
+    local p="$1" f wm
+    rt_set "$p" BLOCK_CN 0
+    rt_set "$p" BLOCK_ADS 0
+    rt_set "$p" BLOCK_BT 1
+    rt_set "$p" WARP_MODE off
+    f="$(rt_conf_file "$p")"
+    if [[ -f "${f}" ]]; then
+        rt_set "$p" BLOCK_CN "$(grep '^block_cn=' "${f}" | head -1 | cut -d= -f2)"
+        rt_set "$p" BLOCK_ADS "$(grep '^block_ads=' "${f}" | head -1 | cut -d= -f2)"
+        rt_set "$p" BLOCK_BT "$(grep '^block_bt=' "${f}" | head -1 | cut -d= -f2)"
+        rt_set "$p" WARP_MODE "$(grep '^warp_mode=' "${f}" | head -1 | cut -d= -f2)"
+    fi
+    [[ -z "$(rt_get "$p" BLOCK_CN)" ]] && rt_set "$p" BLOCK_CN 0
+    [[ -z "$(rt_get "$p" BLOCK_ADS)" ]] && rt_set "$p" BLOCK_ADS 0
+    [[ -z "$(rt_get "$p" BLOCK_BT)" ]] && rt_set "$p" BLOCK_BT 1
+    wm="$(rt_get "$p" WARP_MODE)"
+    [[ "${wm}" != "all" && "${wm}" != "user" ]] && rt_set "$p" WARP_MODE off
+}
+
+rt_load_all() {
+    rt_migrate_legacy
+    local p
+    for p in $(rt_protocols); do
+        rt_load "$p"
+    done
+}
+
+rt_save() {
+    local p="$1"
     mkdir -p "${singbox_conf_dir}"
-    cat >"${anytls_routing_conf_file}" <<EOF
-block_cn=${anytls_block_cn}
-block_ads=${anytls_block_ads}
-block_bt=${anytls_block_bt}
-warp_mode=${anytls_warp_mode}
+    cat >"$(rt_conf_file "$p")" <<EOF
+block_cn=$(rt_get "$p" BLOCK_CN)
+block_ads=$(rt_get "$p" BLOCK_ADS)
+block_bt=$(rt_get "$p" BLOCK_BT)
+warp_mode=$(rt_get "$p" WARP_MODE)
 EOF
 }
 
-_anytls_rules_first=1
-ANYTLS_ROUTING_RULES=""
+_rt_rules_first=1
+RT_ROUTING_RULES=""
 
-_anytls_rules_append() {
-    if [[ ${_anytls_rules_first} -eq 1 ]]; then
-        _anytls_rules_first=0
-        ANYTLS_ROUTING_RULES="$1"
+_rt_rules_append() {
+    if [[ ${_rt_rules_first} -eq 1 ]]; then
+        _rt_rules_first=0
+        RT_ROUTING_RULES="$1"
     else
-        ANYTLS_ROUTING_RULES="${ANYTLS_ROUTING_RULES},$1"
+        RT_ROUTING_RULES="${RT_ROUTING_RULES},$1"
     fi
 }
 
-anytls_routing_rules_gen() {
-    ANYTLS_ROUTING_RULES=""
-    _anytls_rules_first=1
+# 读取名单文件生成 JSON 数组；prefix 为用户名协议前缀（域名/IP 传空）。
+_rt_list_json() {
+    local file="$1" prefix="$2" first=1 out="" v
+    if [[ -f "${file}" ]]; then
+        while read -r v; do
+            [[ -z "${v}" ]] && continue
+            if [[ ${first} -eq 1 ]]; then first=0; else out="${out},"; fi
+            out="${out}\"${prefix}${v}\""
+        done <"${file}"
+    fi
+    echo "${out}"
+}
 
-    if [[ "${anytls_block_bt}" == "1" ]]; then
-        _anytls_rules_append '{"action":"sniff"}'
-        _anytls_rules_append '{"protocol":"bittorrent","outbound":"block"}'
-    fi
-    if [[ "${anytls_block_ads}" == "1" ]]; then
-        _anytls_rules_append '{"rule_set":"geosite-category-ads","outbound":"block"}'
-    fi
-    if [[ "${anytls_block_cn}" == "1" ]]; then
-        _anytls_rules_append '{"rule_set":"geosite-cn","outbound":"block"}'
-        _anytls_rules_append '{"rule_set":"geoip-cn","outbound":"block"}'
-    fi
-
-    local domains_json="" d first_d=1
-    if [[ -f "${anytls_block_domains_file}" ]]; then
-        while read -r d; do
-            [[ -z "${d}" ]] && continue
-            if [[ ${first_d} -eq 1 ]]; then first_d=0; else domains_json="${domains_json},"; fi
-            domains_json="${domains_json}\"${d}\""
-        done <"${anytls_block_domains_file}"
-    fi
-    [[ -n "${domains_json}" ]] && _anytls_rules_append "{\"domain_suffix\":[${domains_json}],\"outbound\":\"block\"}"
-
-    local ips_json="" ip first_i=1
-    if [[ -f "${anytls_block_ips_file}" ]]; then
-        while read -r ip; do
-            [[ -z "${ip}" ]] && continue
-            if [[ ${first_i} -eq 1 ]]; then first_i=0; else ips_json="${ips_json},"; fi
-            ips_json="${ips_json}\"${ip}\""
-        done <"${anytls_block_ips_file}"
-    fi
-    [[ -n "${ips_json}" ]] && _anytls_rules_append "{\"ip_cidr\":[${ips_json}],\"outbound\":\"block\"}"
-
-    if [[ "${anytls_warp_mode}" == "user" ]]; then
-        # 用户名校验：配置里的用户名带 v:/a: 前缀，这里对名单里每个用户两个前缀都加，
-        # 使 WARP 对该用户的 VMess 与 AnyTLS 流量都生效。
-        local warp_users_json="" u
-        if [[ -f "${anytls_warp_users_file}" ]]; then
-            while read -r u; do
-                [[ -z "${u}" ]] && continue
-                warp_users_json="${warp_users_json}${warp_users_json:+,}\"v:${u}\",\"a:${u}\""
-            done <"${anytls_warp_users_file}"
+# 每个协议生成自己的屏蔽 + WARP 规则，全部用 inbound tag 限定作用域。
+rt_rules_gen() {
+    RT_ROUTING_RULES=""
+    _rt_rules_first=1
+    local p tag prefix domains_json ips_json users_json bt ads cn wm
+    for p in $(rt_protocols); do
+        rt_installed "$p" || continue
+        tag="$(rt_inbound_tag "$p")"
+        prefix="$(rt_user_prefix "$p")"
+        bt="$(rt_get "$p" BLOCK_BT)"
+        ads="$(rt_get "$p" BLOCK_ADS)"
+        cn="$(rt_get "$p" BLOCK_CN)"
+        wm="$(rt_get "$p" WARP_MODE)"
+        if [[ "${bt}" == "1" ]]; then
+            _rt_rules_append "{\"inbound\":[\"${tag}\"],\"action\":\"sniff\"}"
+            _rt_rules_append "{\"inbound\":[\"${tag}\"],\"protocol\":\"bittorrent\",\"outbound\":\"block\"}"
         fi
-        [[ -n "${warp_users_json}" ]] && _anytls_rules_append "{\"auth_user\":[${warp_users_json}],\"outbound\":\"warp\"}"
-    fi
-
-    echo "${ANYTLS_ROUTING_RULES}"
+        if [[ "${ads}" == "1" ]]; then
+            _rt_rules_append "{\"inbound\":[\"${tag}\"],\"rule_set\":\"geosite-category-ads\",\"outbound\":\"block\"}"
+        fi
+        if [[ "${cn}" == "1" ]]; then
+            _rt_rules_append "{\"inbound\":[\"${tag}\"],\"rule_set\":\"geosite-cn\",\"outbound\":\"block\"}"
+            _rt_rules_append "{\"inbound\":[\"${tag}\"],\"rule_set\":\"geoip-cn\",\"outbound\":\"block\"}"
+        fi
+        domains_json="$(_rt_list_json "$(rt_domains_file "$p")" "")"
+        [[ -n "${domains_json}" ]] && _rt_rules_append "{\"inbound\":[\"${tag}\"],\"domain_suffix\":[${domains_json}],\"outbound\":\"block\"}"
+        ips_json="$(_rt_list_json "$(rt_ips_file "$p")" "")"
+        [[ -n "${ips_json}" ]] && _rt_rules_append "{\"inbound\":[\"${tag}\"],\"ip_cidr\":[${ips_json}],\"outbound\":\"block\"}"
+        if [[ "${wm}" == "all" ]]; then
+            _rt_rules_append "{\"inbound\":[\"${tag}\"],\"outbound\":\"warp\"}"
+        elif [[ "${wm}" == "user" ]]; then
+            users_json="$(_rt_list_json "$(rt_users_file "$p")" "${prefix}")"
+            [[ -n "${users_json}" ]] && _rt_rules_append "{\"auth_user\":[${users_json}],\"outbound\":\"warp\"}"
+        fi
+    done
+    echo "${RT_ROUTING_RULES}"
 }
 
-_anytls_rs_first=1
-ANYTLS_ROUTING_RULESET=""
+_rt_rs_first=1
+RT_ROUTING_RULESET=""
 
-_anytls_rs_append() {
-    if [[ ${_anytls_rs_first} -eq 1 ]]; then
-        _anytls_rs_first=0
-        ANYTLS_ROUTING_RULESET="$1"
+_rt_rs_append() {
+    if [[ ${_rt_rs_first} -eq 1 ]]; then
+        _rt_rs_first=0
+        RT_ROUTING_RULESET="$1"
     else
-        ANYTLS_ROUTING_RULESET="${ANYTLS_ROUTING_RULESET},$1"
+        RT_ROUTING_RULESET="${RT_ROUTING_RULESET},$1"
     fi
 }
 
-anytls_routing_rule_set_gen() {
-    ANYTLS_ROUTING_RULESET=""
-    _anytls_rs_first=1
-    if [[ "${anytls_block_ads}" == "1" ]]; then
-        _anytls_rs_append "{\"type\":\"local\",\"tag\":\"geosite-category-ads\",\"format\":\"binary\",\"path\":\"${singbox_conf_dir}/geosite-category-ads.srs\"}"
+# rule_set 定义是共享的，取两协议需求的并集。
+rt_rule_set_gen() {
+    RT_ROUTING_RULESET=""
+    _rt_rs_first=1
+    local p need_ads=0 need_cn=0
+    for p in $(rt_protocols); do
+        [[ "$(rt_get "$p" BLOCK_ADS)" == "1" ]] && need_ads=1
+        [[ "$(rt_get "$p" BLOCK_CN)" == "1" ]] && need_cn=1
+    done
+    if [[ ${need_ads} -eq 1 ]]; then
+        _rt_rs_append "{\"type\":\"local\",\"tag\":\"geosite-category-ads\",\"format\":\"binary\",\"path\":\"${singbox_conf_dir}/geosite-category-ads.srs\"}"
     fi
-    if [[ "${anytls_block_cn}" == "1" ]]; then
-        _anytls_rs_append "{\"type\":\"local\",\"tag\":\"geosite-cn\",\"format\":\"binary\",\"path\":\"${singbox_conf_dir}/geosite-cn.srs\"}"
-        _anytls_rs_append "{\"type\":\"local\",\"tag\":\"geoip-cn\",\"format\":\"binary\",\"path\":\"${singbox_conf_dir}/geoip-cn.srs\"}"
+    if [[ ${need_cn} -eq 1 ]]; then
+        _rt_rs_append "{\"type\":\"local\",\"tag\":\"geosite-cn\",\"format\":\"binary\",\"path\":\"${singbox_conf_dir}/geosite-cn.srs\"}"
+        _rt_rs_append "{\"type\":\"local\",\"tag\":\"geoip-cn\",\"format\":\"binary\",\"path\":\"${singbox_conf_dir}/geoip-cn.srs\"}"
     fi
-    echo "${ANYTLS_ROUTING_RULESET}"
+    echo "${RT_ROUTING_RULESET}"
 }
 
 singbox_geodata_download() {
@@ -1298,12 +1402,16 @@ singbox_geodata_download() {
     judge "sing-box geodata 下载"
 }
 
-anytls_routing_ensure_geodata() {
-    local f missing=0
-    if [[ "${anytls_block_ads}" == "1" ]]; then
+rt_ensure_geodata() {
+    local p need_ads=0 need_cn=0 missing=0
+    for p in $(rt_protocols); do
+        [[ "$(rt_get "$p" BLOCK_ADS)" == "1" ]] && need_ads=1
+        [[ "$(rt_get "$p" BLOCK_CN)" == "1" ]] && need_cn=1
+    done
+    if [[ ${need_ads} -eq 1 ]]; then
         [[ -f "${singbox_conf_dir}/geosite-category-ads.srs" ]] || missing=1
     fi
-    if [[ "${anytls_block_cn}" == "1" ]]; then
+    if [[ ${need_cn} -eq 1 ]]; then
         [[ -f "${singbox_conf_dir}/geosite-cn.srs" ]] || missing=1
         [[ -f "${singbox_conf_dir}/geoip-cn.srs" ]] || missing=1
     fi
@@ -1318,9 +1426,11 @@ singbox_geodata_update() {
     singbox_geodata_download
 }
 
-anytls_block_domain_list() {
-    echo -e "${OK} ${GreenBG} 当前屏蔽域名列表 ${Font}"
-    if [[ ! -f "${anytls_block_domains_file}" ]] || [[ ! -s "${anytls_block_domains_file}" ]]; then
+rt_block_domain_list() {
+    local p="$1" f
+    f="$(rt_domains_file "$p")"
+    echo -e "${OK} ${GreenBG} 当前屏蔽域名列表（$(rt_label "$p")）${Font}"
+    if [[ ! -f "${f}" ]] || [[ ! -s "${f}" ]]; then
         echo -e "${Red} 无 ${Font}"
         return 0
     fi
@@ -1329,10 +1439,12 @@ anytls_block_domain_list() {
         [[ -z "${d}" ]] && continue
         idx=$((idx + 1))
         echo -e "${Green}${idx}.${Font} ${d}"
-    done <"${anytls_block_domains_file}"
+    done <"${f}"
 }
 
-anytls_block_domain_add() {
+rt_block_domain_add() {
+    local p="$1" f
+    f="$(rt_domains_file "$p")"
     read -rp "请输入要屏蔽的域名（eg: example.com）:" domain_item
     [[ -z "${domain_item}" ]] && return 1
     if [[ "${domain_item}" =~ [[:space:]] ]]; then
@@ -1340,29 +1452,33 @@ anytls_block_domain_add() {
         return 1
     fi
     mkdir -p "${singbox_conf_dir}"
-    echo "${domain_item}" >>"${anytls_block_domains_file}"
+    echo "${domain_item}" >>"${f}"
     anytls_conf_add
     systemctl restart sing-box
     judge "屏蔽域名添加"
 }
 
-anytls_block_domain_del() {
-    if [[ ! -s "${anytls_block_domains_file}" ]]; then
+rt_block_domain_del() {
+    local p="$1" f
+    f="$(rt_domains_file "$p")"
+    if [[ ! -s "${f}" ]]; then
         echo -e "${Error} ${RedBG} 屏蔽域名列表为空 ${Font}"
         return 1
     fi
-    anytls_block_domain_list
+    rt_block_domain_list "$p"
     read -rp "请输入要删除的域名:" del_domain
     [[ -z "${del_domain}" ]] && return 1
-    sed -i "/^${del_domain}$/d" "${anytls_block_domains_file}"
+    sed -i "/^${del_domain}$/d" "${f}"
     anytls_conf_add
     systemctl restart sing-box
     judge "屏蔽域名删除"
 }
 
-anytls_block_ip_list() {
-    echo -e "${OK} ${GreenBG} 当前屏蔽 IP 列表 ${Font}"
-    if [[ ! -f "${anytls_block_ips_file}" ]] || [[ ! -s "${anytls_block_ips_file}" ]]; then
+rt_block_ip_list() {
+    local p="$1" f
+    f="$(rt_ips_file "$p")"
+    echo -e "${OK} ${GreenBG} 当前屏蔽 IP 列表（$(rt_label "$p")）${Font}"
+    if [[ ! -f "${f}" ]] || [[ ! -s "${f}" ]]; then
         echo -e "${Red} 无 ${Font}"
         return 0
     fi
@@ -1371,10 +1487,12 @@ anytls_block_ip_list() {
         [[ -z "${ip_item}" ]] && continue
         idx=$((idx + 1))
         echo -e "${Green}${idx}.${Font} ${ip_item}"
-    done <"${anytls_block_ips_file}"
+    done <"${f}"
 }
 
-anytls_block_ip_add() {
+rt_block_ip_add() {
+    local p="$1" f
+    f="$(rt_ips_file "$p")"
     read -rp "请输入要屏蔽的 IP 或 CIDR（eg: 1.2.3.4 或 10.0.0.0/8）:" ip_item
     [[ -z "${ip_item}" ]] && return 1
     if [[ "${ip_item}" =~ [[:space:]] ]]; then
@@ -1382,30 +1500,33 @@ anytls_block_ip_add() {
         return 1
     fi
     mkdir -p "${singbox_conf_dir}"
-    echo "${ip_item}" >>"${anytls_block_ips_file}"
+    echo "${ip_item}" >>"${f}"
     anytls_conf_add
     systemctl restart sing-box
     judge "屏蔽 IP 添加"
 }
 
-anytls_block_ip_del() {
-    if [[ ! -s "${anytls_block_ips_file}" ]]; then
+rt_block_ip_del() {
+    local p="$1" f
+    f="$(rt_ips_file "$p")"
+    if [[ ! -s "${f}" ]]; then
         echo -e "${Error} ${RedBG} 屏蔽 IP 列表为空 ${Font}"
         return 1
     fi
-    anytls_block_ip_list
+    rt_block_ip_list "$p"
     read -rp "请输入要删除的 IP 或 CIDR:" del_ip
     [[ -z "${del_ip}" ]] && return 1
-    sed -i "/^${del_ip}$/d" "${anytls_block_ips_file}"
+    sed -i "/^${del_ip}$/d" "${f}"
     anytls_conf_add
     systemctl restart sing-box
     judge "屏蔽 IP 删除"
 }
 
-anytls_block_domain_menu() {
+rt_block_domain_menu() {
+    local p="$1"
     while true; do
         clear_screen
-        echo -e "\t 禁止自定义域名"
+        echo -e "\t 禁止自定义域名（$(rt_label "$p")）"
         echo -e "${Green}1.${Font} 查看屏蔽域名列表"
         echo -e "${Green}2.${Font} 添加屏蔽域名"
         echo -e "${Green}3.${Font} 删除屏蔽域名"
@@ -1413,13 +1534,13 @@ anytls_block_domain_menu() {
         read -rp "请输入数字：" bd_num
         case ${bd_num} in
         1)
-            anytls_block_domain_list
+            rt_block_domain_list "$p"
             ;;
         2)
-            anytls_block_domain_add
+            rt_block_domain_add "$p"
             ;;
         3)
-            anytls_block_domain_del
+            rt_block_domain_del "$p"
             ;;
         0)
             break
@@ -1432,10 +1553,11 @@ anytls_block_domain_menu() {
     done
 }
 
-anytls_block_ip_menu() {
+rt_block_ip_menu() {
+    local p="$1"
     while true; do
         clear_screen
-        echo -e "\t 禁止自定义 IP"
+        echo -e "\t 禁止自定义 IP（$(rt_label "$p")）"
         echo -e "${Green}1.${Font} 查看屏蔽 IP 列表"
         echo -e "${Green}2.${Font} 添加屏蔽 IP"
         echo -e "${Green}3.${Font} 删除屏蔽 IP"
@@ -1443,13 +1565,13 @@ anytls_block_ip_menu() {
         read -rp "请输入数字：" bi_num
         case ${bi_num} in
         1)
-            anytls_block_ip_list
+            rt_block_ip_list "$p"
             ;;
         2)
-            anytls_block_ip_add
+            rt_block_ip_add "$p"
             ;;
         3)
-            anytls_block_ip_del
+            rt_block_ip_del "$p"
             ;;
         0)
             break
@@ -1462,9 +1584,11 @@ anytls_block_ip_menu() {
     done
 }
 
-anytls_warp_user_list() {
-    echo -e "${OK} ${GreenBG} 当前 WARP 用户列表（VMess / AnyTLS 共用，仅 user 模式生效）${Font}"
-    if [[ ! -f "${anytls_warp_users_file}" ]] || [[ ! -s "${anytls_warp_users_file}" ]]; then
+rt_warp_user_list() {
+    local p="$1" f
+    f="$(rt_users_file "$p")"
+    echo -e "${OK} ${GreenBG} 当前 WARP 用户列表（$(rt_label "$p")，仅 user 模式生效）${Font}"
+    if [[ ! -f "${f}" ]] || [[ ! -s "${f}" ]]; then
         echo -e "${Red} 无 ${Font}"
         return 0
     fi
@@ -1473,41 +1597,46 @@ anytls_warp_user_list() {
         [[ -z "${u}" ]] && continue
         idx=$((idx + 1))
         echo -e "${Green}${idx}.${Font} ${u}"
-    done <"${anytls_warp_users_file}"
+    done <"${f}"
 }
 
-anytls_warp_user_add() {
-    read -rp "请输入要走 WARP 的用户名（需与 VMess / AnyTLS 用户名一致）:" warp_user
+rt_warp_user_add() {
+    local p="$1" f
+    f="$(rt_users_file "$p")"
+    read -rp "请输入要走 WARP 的用户名（需与 $(rt_label "$p") 用户名一致）:" warp_user
     [[ -z "${warp_user}" ]] && return 1
     if [[ "${warp_user}" =~ [[:space:]] ]]; then
         echo -e "${Error} ${RedBG} 用户名不能包含空格 ${Font}"
         return 1
     fi
     mkdir -p "${singbox_conf_dir}"
-    echo "${warp_user}" >>"${anytls_warp_users_file}"
+    echo "${warp_user}" >>"${f}"
     anytls_conf_add
     systemctl restart sing-box
     judge "WARP 用户添加"
 }
 
-anytls_warp_user_del() {
-    if [[ ! -s "${anytls_warp_users_file}" ]]; then
+rt_warp_user_del() {
+    local p="$1" f
+    f="$(rt_users_file "$p")"
+    if [[ ! -s "${f}" ]]; then
         echo -e "${Error} ${RedBG} WARP 用户列表为空 ${Font}"
         return 1
     fi
-    anytls_warp_user_list
+    rt_warp_user_list "$p"
     read -rp "请输入要删除的用户名:" del_user
     [[ -z "${del_user}" ]] && return 1
-    sed -i "/^${del_user}$/d" "${anytls_warp_users_file}"
+    sed -i "/^${del_user}$/d" "${f}"
     anytls_conf_add
     systemctl restart sing-box
     judge "WARP 用户删除"
 }
 
-anytls_warp_user_menu() {
+rt_warp_user_menu() {
+    local p="$1"
     while true; do
         clear_screen
-        echo -e "\t 管理 WARP 用户（VMess / AnyTLS 共用）"
+        echo -e "\t 管理 WARP 用户（$(rt_label "$p")）"
         echo -e "${Green}1.${Font} 查看 WARP 用户列表"
         echo -e "${Green}2.${Font} 添加 WARP 用户"
         echo -e "${Green}3.${Font} 删除 WARP 用户"
@@ -1515,13 +1644,13 @@ anytls_warp_user_menu() {
         read -rp "请输入数字：" wu_num
         case ${wu_num} in
         1)
-            anytls_warp_user_list
+            rt_warp_user_list "$p"
             ;;
         2)
-            anytls_warp_user_add
+            rt_warp_user_add "$p"
             ;;
         3)
-            anytls_warp_user_del
+            rt_warp_user_del "$p"
             ;;
         0)
             break
@@ -1534,7 +1663,8 @@ anytls_warp_user_menu() {
     done
 }
 
-anytls_routing_menu() {
+rt_menu() {
+    local p="$1"
     if [[ ! -f "${singbox_conf}" ]]; then
         echo -e "${Error} ${RedBG} sing-box 未安装，请先安装 VMess 或 AnyTLS ${Font}"
         pause_continue
@@ -1542,14 +1672,15 @@ anytls_routing_menu() {
     fi
     while true; do
         clear_screen
-        anytls_routing_load
-        local cn_s="关" ads_s="关" bt_s="关" warp_s="off(直连)"
-        [[ "${anytls_block_cn}" == "1" ]] && cn_s="开"
-        [[ "${anytls_block_ads}" == "1" ]] && ads_s="开"
-        [[ "${anytls_block_bt}" == "1" ]] && bt_s="开"
-        [[ "${anytls_warp_mode}" == "all" ]] && warp_s="all(全量WARP)"
-        [[ "${anytls_warp_mode}" == "user" ]] && warp_s="user(指定用户)"
-        echo -e "\t 路由规则（VMess / AnyTLS 共用）"
+        rt_load "$p"
+        local cn_s="关" ads_s="关" bt_s="关" warp_s="off(直连)" wm
+        [[ "$(rt_get "$p" BLOCK_CN)" == "1" ]] && cn_s="开"
+        [[ "$(rt_get "$p" BLOCK_ADS)" == "1" ]] && ads_s="开"
+        [[ "$(rt_get "$p" BLOCK_BT)" == "1" ]] && bt_s="开"
+        wm="$(rt_get "$p" WARP_MODE)"
+        [[ "${wm}" == "all" ]] && warp_s="all(全量WARP)"
+        [[ "${wm}" == "user" ]] && warp_s="user(指定用户)"
+        echo -e "\t 路由规则（$(rt_label "$p")）"
         echo -e "${Green}1.${Font} 禁止国内地址  [${cn_s}]"
         echo -e "${Green}2.${Font} 禁止广告地址  [${ads_s}]"
         echo -e "${Green}3.${Font} 禁止 BT 协议  [${bt_s}]"
@@ -1561,50 +1692,50 @@ anytls_routing_menu() {
         read -rp "请输入数字：" routing_num
         case ${routing_num} in
         1)
-            if [[ "${anytls_block_cn}" == "1" ]]; then anytls_block_cn=0; else anytls_block_cn=1; fi
-            anytls_routing_save
+            if [[ "$(rt_get "$p" BLOCK_CN)" == "1" ]]; then rt_set "$p" BLOCK_CN 0; else rt_set "$p" BLOCK_CN 1; fi
+            rt_save "$p"
             anytls_conf_add
             systemctl restart sing-box
             judge "禁止国内地址 切换"
             ;;
         2)
-            if [[ "${anytls_block_ads}" == "1" ]]; then anytls_block_ads=0; else anytls_block_ads=1; fi
-            anytls_routing_save
+            if [[ "$(rt_get "$p" BLOCK_ADS)" == "1" ]]; then rt_set "$p" BLOCK_ADS 0; else rt_set "$p" BLOCK_ADS 1; fi
+            rt_save "$p"
             anytls_conf_add
             systemctl restart sing-box
             judge "禁止广告地址 切换"
             ;;
         3)
-            if [[ "${anytls_block_bt}" == "1" ]]; then anytls_block_bt=0; else anytls_block_bt=1; fi
-            anytls_routing_save
+            if [[ "$(rt_get "$p" BLOCK_BT)" == "1" ]]; then rt_set "$p" BLOCK_BT 0; else rt_set "$p" BLOCK_BT 1; fi
+            rt_save "$p"
             anytls_conf_add
             systemctl restart sing-box
             judge "禁止 BT 协议 切换"
             ;;
         4)
-            anytls_block_domain_menu
+            rt_block_domain_menu "$p"
             continue
             ;;
         5)
-            anytls_block_ip_menu
+            rt_block_ip_menu "$p"
             continue
             ;;
         6)
-            case "${anytls_warp_mode}" in
-            off) anytls_warp_mode="all" ;;
-            all) anytls_warp_mode="user" ;;
-            *) anytls_warp_mode="off" ;;
+            case "$(rt_get "$p" WARP_MODE)" in
+            off) rt_set "$p" WARP_MODE all ;;
+            all) rt_set "$p" WARP_MODE user ;;
+            *) rt_set "$p" WARP_MODE off ;;
             esac
-            if [[ "${anytls_warp_mode}" != "off" ]] && ! warp_installed; then
+            if [[ "$(rt_get "$p" WARP_MODE)" != "off" ]] && ! warp_installed; then
                 echo -e "${Error} ${RedBG} WARP 未安装，请先在「安装与升级 → WARP」中安装，否则出站将失败 ${Font}"
             fi
-            anytls_routing_save
+            rt_save "$p"
             anytls_conf_add
             systemctl restart sing-box
             judge "WARP 出站模式 切换"
             ;;
         7)
-            anytls_warp_user_menu
+            rt_warp_user_menu "$p"
             continue
             ;;
         0)
@@ -1672,12 +1803,11 @@ singbox_conf_add() {
         inbounds_json="${inbounds_json}${anytls_inbound}"
     fi
 
-    anytls_routing_load
-    anytls_routing_ensure_geodata
-    local routing_rules_json rule_set_json route_final="direct"
-    routing_rules_json="$(anytls_routing_rules_gen)"
-    rule_set_json="$(anytls_routing_rule_set_gen)"
-    [[ "${anytls_warp_mode}" == "all" ]] && route_final="warp"
+    rt_load_all
+    rt_ensure_geodata
+    local routing_rules_json rule_set_json
+    routing_rules_json="$(rt_rules_gen)"
+    rule_set_json="$(rt_rule_set_gen)"
 
     local panel_log_output="" panel_experimental=""
     if panel_installed; then
@@ -1751,7 +1881,7 @@ PANEL_EXP
     "rules": [
       ${routing_rules_json}
     ],
-    "final": "${route_final}"
+    "final": "direct"
   }${panel_experimental}
 }
 EOF
@@ -3396,7 +3526,7 @@ v2ray_config_menu() {
             start_process_systemd
             ;;
         5)
-            anytls_routing_menu
+            rt_menu vmess
             continue
             ;;
         0)
@@ -3428,7 +3558,7 @@ anytls_config_menu() {
             anytls_port_change
             ;;
         3)
-            anytls_routing_menu
+            rt_menu anytls
             continue
             ;;
         0)

@@ -21,7 +21,7 @@ wget -N --no-check-certificate -q -O install.sh "https://raw.githubusercontent.c
 - 移除 bbr / mtproxy / http/2 安装模式
 - **VMess (ws+tls) 与 AnyTLS 均基于 sing-box**：Nginx 终止 TLS 并把 WS 反代到 sing-box 的 `vmess-in`；两协议共用同一个 sing-box 实例、同一套路由与统计
 - VMess / AnyTLS 均支持多用户管理
-- VMess / AnyTLS 共用路由规则（屏蔽国内/广告/BT/自定义域名/IP）
+- VMess / AnyTLS 各自独立的路由规则（屏蔽国内/广告/BT/自定义域名/IP）与 WARP 出站设置
 - 新增流量面板（单文件 Go 静态二进制），可视化每用户流量、在线状态、连接日志与路由拓扑
 
 ### 管理脚本
@@ -57,10 +57,10 @@ AnyTLS = anytls, your.domain.com, 8443, password=xxxxxxxxxxxxxxxx, sni=your.doma
 将节点的出站流量走 Cloudflare WARP，获得干净的 Cloudflare 出口 IP（仅支持 Debian/Ubuntu）。
 
 1. 进入管理菜单 → `1 安装与升级` → `5 安装/卸载 WARP` → 安装并验证 `warp=on`
-2. 配置出站模式（VMess/AnyTLS 共用）：`VMess 配置`（或 `AnyTLS 配置`）→ `路由规则` → `WARP 出站模式`，在 `off`(直连) / `all`(全量走 WARP) / `user`(仅指定用户) 间切换
-3. `user` 模式下，用 `管理 WARP 用户` 添加需要走 WARP 的用户名（需与 VMess/AnyTLS 用户名一致）
+2. 配置出站模式（VMess / AnyTLS **各自独立**）：`VMess 配置` → `5 路由规则`（或 `AnyTLS 配置` → `3 路由规则`）→ `WARP 出站模式`，在 `off`(直连) / `all`(全量走 WARP) / `user`(仅指定用户) 间切换
+3. `user` 模式下，用 `7 管理 WARP 用户` 添加需要走 WARP 的用户名（对当前协议生效）
 
-> WARP 隧道为系统级，VMess/AnyTLS 共用同一个 sing-box 实例与同一套路由。WARP 控制面显示 `Connected` 不代表转发正常，脚本通过 SOCKS 探活 `warp=on` 校验。可安装自愈守护（systemd timer 每 60s 检测，异常自动重启 `warp-svc`）。
+> WARP 隧道为系统级；路由规则由 sing-box 按入站（`vmess-in` / `anytls-in`）分别匹配，因此两协议的屏蔽、出站模式与 WARP 用户名单互不影响。WARP 控制面显示 `Connected` 不代表转发正常，脚本通过 SOCKS 探活 `warp=on` 校验。可安装自愈守护（systemd timer 每 60s 检测，异常自动重启 `warp-svc`）。
 
 ### 流量面板
 
@@ -97,9 +97,10 @@ systemctl restart sing-box # 重启 sing-box (VMess/AnyTLS)
 | `/usr/local/vmess_qr.json` | VMess 客户端配置（生成导入链接用） |
 | `/etc/sing-box/config.json` | sing-box 服务端配置（VMess + AnyTLS） |
 | `/etc/sing-box/users` | AnyTLS 用户列表 |
-| `/etc/sing-box/routing.conf` | 路由规则开关 |
-| `/etc/sing-box/block_domains` `/etc/sing-box/block_ips` | 自定义屏蔽域名/IP |
-| `/etc/sing-box/warp_users` | WARP 用户列表（user 模式） |
+| `/etc/sing-box/vmess_routing.conf` `/etc/sing-box/anytls_routing.conf` | VMess / AnyTLS 路由规则开关（各自独立） |
+| `/etc/sing-box/vmess_block_domains` `/etc/sing-box/anytls_block_domains` | 自定义屏蔽域名（各自独立） |
+| `/etc/sing-box/vmess_block_ips` `/etc/sing-box/anytls_block_ips` | 自定义屏蔽 IP（各自独立） |
+| `/etc/sing-box/vmess_warp_users` `/etc/sing-box/anytls_warp_users` | WARP 用户列表（user 模式，各自独立） |
 | `/etc/sing-box/*.srs` | 路由规则集数据文件 |
 | `/etc/panel/config.json` | 流量面板配置 |
 | `/var/lib/panel/panel.db` | 流量面板历史数据库（SQLite） |
