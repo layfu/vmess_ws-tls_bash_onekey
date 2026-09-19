@@ -139,7 +139,10 @@ func vmessWSPath(path string) string {
 	return ""
 }
 
-func singboxPort(path string) string {
+// anytlsPort returns the listen port of the AnyTLS inbound in the sing-box
+// config. The config also holds the loopback VMess inbound, so the first
+// inbound must not be used blindly.
+func anytlsPort(path string) string {
 	if path == "" {
 		return ""
 	}
@@ -149,20 +152,23 @@ func singboxPort(path string) string {
 	}
 	var c struct {
 		Inbounds []struct {
-			ListenPort int `json:"listen_port"`
+			Type       string `json:"type"`
+			Tag        string `json:"tag"`
+			ListenPort int    `json:"listen_port"`
 		} `json:"inbounds"`
 	}
 	if err := json.Unmarshal(data, &c); err != nil {
 		return ""
 	}
 	for _, in := range c.Inbounds {
-		if in.ListenPort > 0 {
+		if (in.Type == "anytls" || in.Tag == "anytls-in") && in.ListenPort > 0 {
 			return strconv.Itoa(in.ListenPort)
 		}
 	}
 	return ""
 }
 
+// singboxCertPath returns the certificate path of the AnyTLS inbound.
 func singboxCertPath(path string) string {
 	if path == "" {
 		return ""
@@ -173,7 +179,9 @@ func singboxCertPath(path string) string {
 	}
 	var c struct {
 		Inbounds []struct {
-			TLS struct {
+			Type string `json:"type"`
+			Tag  string `json:"tag"`
+			TLS  struct {
 				CertificatePath string `json:"certificate_path"`
 			} `json:"tls"`
 		} `json:"inbounds"`
@@ -182,8 +190,10 @@ func singboxCertPath(path string) string {
 		return ""
 	}
 	for _, in := range c.Inbounds {
-		if in.TLS.CertificatePath != "" {
-			return in.TLS.CertificatePath
+		if in.Type == "anytls" || in.Tag == "anytls-in" {
+			if in.TLS.CertificatePath != "" {
+				return in.TLS.CertificatePath
+			}
 		}
 	}
 	return ""
@@ -276,7 +286,7 @@ func loadAnyTLSConfigs(p ProtocolConfig, fallbackDomain string) []userConfig {
 	if len(users) == 0 {
 		return nil
 	}
-	port := singboxPort(p.ConfigFile)
+	port := anytlsPort(p.ConfigFile)
 	if port == "" {
 		port = "8443"
 	}

@@ -131,6 +131,28 @@ func TestLoadVmessConfigsPathFallback(t *testing.T) {
 	}
 }
 
+func TestAnyTLSPortPicksAnyTLSInbound(t *testing.T) {
+	dir := t.TempDir()
+	// The real config lists the loopback VMess inbound first; the AnyTLS port
+	// must come from the anytls inbound, not from inbounds[0].
+	conf := writeFile(t, dir, "config.json",
+		`{"inbounds":[`+
+			`{"type":"vmess","tag":"vmess-in","listen":"127.0.0.1","listen_port":49840},`+
+			`{"type":"anytls","tag":"anytls-in","listen":"::","listen_port":8443}`+
+			`]}`)
+	if got := anytlsPort(conf); got != "8443" {
+		t.Errorf("anytlsPort = %q, want 8443", got)
+	}
+
+	empty := writeFile(t, dir, "empty.json", `{"inbounds":[{"type":"vmess","listen_port":49840}]}`)
+	if got := anytlsPort(empty); got != "" {
+		t.Errorf("anytlsPort without anytls inbound = %q, want empty", got)
+	}
+	if got := anytlsPort(""); got != "" {
+		t.Errorf("anytlsPort(empty path) = %q, want empty", got)
+	}
+}
+
 func TestLoadAnyTLSConfigs(t *testing.T) {
 	dir := t.TempDir()
 	usersFile := writeFile(t, dir, "users", "bob secret-bob\n")
@@ -242,18 +264,18 @@ func TestAnyTLSSkipCertCheck(t *testing.T) {
 	dir := t.TempDir()
 
 	self := writeFile(t, dir, "self.crt", string(selfSignedPEM(t)))
-	selfConf := writeFile(t, dir, "self-conf.json", `{"inbounds":[{"tls":{"certificate_path":"`+self+`"}}]}`)
+	selfConf := writeFile(t, dir, "self-conf.json", `{"inbounds":[{"type":"anytls","tag":"anytls-in","tls":{"certificate_path":"`+self+`"}}]}`)
 	if got := anytlsSkipCertCheck(selfConf); got != "是" {
 		t.Errorf("self-signed cert: skip_cert_check = %q, want 是", got)
 	}
 
 	ca := writeFile(t, dir, "ca.crt", string(caSignedPEM(t)))
-	caConf := writeFile(t, dir, "ca-conf.json", `{"inbounds":[{"tls":{"certificate_path":"`+ca+`"}}]}`)
+	caConf := writeFile(t, dir, "ca-conf.json", `{"inbounds":[{"type":"anytls","tag":"anytls-in","tls":{"certificate_path":"`+ca+`"}}]}`)
 	if got := anytlsSkipCertCheck(caConf); got != "否" {
 		t.Errorf("CA-signed cert: skip_cert_check = %q, want 否", got)
 	}
 
-	missingConf := writeFile(t, dir, "missing-conf.json", `{"inbounds":[{"tls":{"certificate_path":"/nonexistent.crt"}}]}`)
+	missingConf := writeFile(t, dir, "missing-conf.json", `{"inbounds":[{"type":"anytls","tag":"anytls-in","tls":{"certificate_path":"/nonexistent.crt"}}]}`)
 	if got := anytlsSkipCertCheck(missingConf); got != "否" {
 		t.Errorf("missing cert: skip_cert_check = %q, want 否", got)
 	}
