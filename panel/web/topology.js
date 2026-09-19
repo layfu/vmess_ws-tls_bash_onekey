@@ -8,8 +8,8 @@
   const PAD_Y = 14;
   const COL_W = 186;
   const NODE_W = 150;
-  const NODE_H = 38;
-  const NODE_PITCH = 46;
+  const NODE_H = 54;
+  const NODE_PITCH = 62;
   const LAYERS = 5;
   const MIN_STAGE_H = 200;
   const PARTICLE_COUNT = 2;
@@ -36,6 +36,29 @@
   const nodesEl = document.getElementById('topo-nodes');
   const emptyEl = document.getElementById('topo-empty');
   const summaryEl = document.getElementById('topo-summary');
+
+  // 完整标签的悬浮提示（仅当标签被截断时显示）。
+  const tipEl = document.createElement('div');
+  tipEl.className = 'topo-tip';
+  tipEl.hidden = true;
+  document.body.appendChild(tipEl);
+
+  function showTip(text, anchor) {
+    tipEl.textContent = text;
+    tipEl.hidden = false;
+    const r = tipEl.getBoundingClientRect();
+    const a = anchor.getBoundingClientRect();
+    let left = a.left + a.width / 2 - r.width / 2;
+    left = Math.max(8, Math.min(left, window.innerWidth - r.width - 8));
+    let top = a.top - r.height - 6;
+    if (top < 8) top = a.bottom + 6;
+    tipEl.style.left = left + 'px';
+    tipEl.style.top = top + 'px';
+  }
+
+  function hideTip() {
+    tipEl.hidden = true;
+  }
 
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -211,6 +234,7 @@
     hoverMinLayer = 0;
     hoverMaxLayer = 0;
     hovered = null;
+    hideTip();
   }
 
   function buildNodes() {
@@ -225,7 +249,7 @@
       el.style.top = (c.y - NODE_H / 2) + 'px';
       el.style.width = NODE_W + 'px';
       el.style.height = NODE_H + 'px';
-      el.title = n.label;
+      el.setAttribute('aria-label', n.label);
 
       const dot = document.createElement('i');
       dot.className = 'topo-dot';
@@ -240,8 +264,15 @@
       el.appendChild(label);
       el.appendChild(count);
 
-      el.addEventListener('mouseenter', () => highlight(n.id));
-      el.addEventListener('mouseleave', clearHighlight);
+      el.addEventListener('mouseenter', () => {
+        highlight(n.id);
+        // 仅在标签被截断时提示完整文本。
+        if (label.scrollHeight > label.clientHeight + 1) showTip(n.label, el);
+      });
+      el.addEventListener('mouseleave', () => {
+        clearHighlight();
+        hideTip();
+      });
       nodesEl.appendChild(el);
       nodeEls.set(n.id, el);
     }
@@ -481,6 +512,8 @@
     hiddenByTab = document.hidden;
     applyPause();
   });
+  window.addEventListener('scroll', hideTip, { passive: true, capture: true });
+  window.addEventListener('resize', hideTip, { passive: true });
   if ('IntersectionObserver' in window) {
     const io = new IntersectionObserver((entries) => {
       for (const entry of entries) offscreen = !entry.isIntersecting;
