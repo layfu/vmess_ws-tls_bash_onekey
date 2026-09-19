@@ -102,10 +102,10 @@
   }
 
   // 悬停某一层时要激活的层窗口：中间三层取本层 ±1，用户层展开到全部下游，
-  // 目标层只留自己。其余层置灰。
+  // 目标层激活「出口 + 目标」。其余层置灰。
   function hoverWindow(layer) {
     if (layer <= 0) return [0, 4];
-    if (layer >= 4) return [4, 4];
+    if (layer >= 4) return [3, 4];
     return [layer - 1, layer + 1];
   }
 
