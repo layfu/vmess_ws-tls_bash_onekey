@@ -872,7 +872,7 @@ footer {
   overflow: visible;
 }
 .topo-edge { transition: opacity 220ms var(--ease-out); }
-.topo-edge.dim { opacity: 0.08; }
+.topo-edge.dim { opacity: 0.12; }
 .topo-edge-track {
   fill: none;
   stroke-linecap: round;
@@ -905,19 +905,20 @@ footer {
   color: var(--text-secondary);
   font-size: 11.5px;
   transition: opacity 200ms var(--ease-out), border-color 160ms var(--ease-out),
-    transform 160ms var(--ease-out);
+    box-shadow 160ms var(--ease-out);
 }
-.topo-node.dim { opacity: 0.12; }
+.topo-node.dim { opacity: 0.18; }
 .topo-node.unit-count {
   border-style: dashed;
   border-color: rgba(255, 90, 90, 0.4);
 }
 .topo-dot {
   grid-column: 1;
-  grid-row: 1 / -1;
-  align-self: center;
+  grid-row: 1;
+  align-self: start;
   width: 7px;
   height: 7px;
+  margin-top: calc((1.25em - 7px) / 2);
   border-radius: 50%;
   background: var(--muted);
 }
@@ -937,9 +938,9 @@ footer {
   grid-column: 2;
   grid-row: 2;
   justify-self: end;
-  font-size: 10px;
+  font-size: 10.5px;
   line-height: 1.2;
-  color: var(--muted);
+  color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
 }
 .topo-tip {
@@ -956,7 +957,21 @@ footer {
   line-height: 1.35;
   overflow-wrap: anywhere;
   pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(2px) scale(0.98);
+  transform-origin: center bottom;
+  transition: opacity 125ms var(--ease-out), transform 125ms var(--ease-out),
+    visibility 0s linear 125ms;
 }
+.topo-tip.show {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition: opacity 125ms var(--ease-out), transform 125ms var(--ease-out);
+}
+/* 相邻节点间快速移动时跳过入场动画 */
+.topo-tip.instant { transition: none; }
 .topo-node.kind-server {
   border-color: rgba(91, 140, 255, 0.45);
   background: rgba(91, 140, 255, 0.1);
@@ -989,8 +1004,13 @@ footer {
 @media (hover: hover) and (pointer: fine) {
   .topo-node:hover {
     border-color: var(--border-strong);
-    transform: translateY(-1px);
+    box-shadow: var(--highlight), 0 0 0 3px rgba(255, 255, 255, 0.05);
   }
+}
+.topo-node:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--highlight), 0 0 0 3px rgba(91, 140, 255, 0.28);
 }
 
 /* ---- 响应式 ---- */

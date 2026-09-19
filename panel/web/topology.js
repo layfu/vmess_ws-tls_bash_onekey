@@ -40,24 +40,29 @@
   // 完整标签的悬浮提示（仅当标签被截断时显示）。
   const tipEl = document.createElement('div');
   tipEl.className = 'topo-tip';
-  tipEl.hidden = true;
   document.body.appendChild(tipEl);
+  let tipHideAt = 0;
 
   function showTip(text, anchor) {
     tipEl.textContent = text;
-    tipEl.hidden = false;
-    const r = tipEl.getBoundingClientRect();
+    const w = tipEl.offsetWidth;
+    const h = tipEl.offsetHeight;
     const a = anchor.getBoundingClientRect();
-    let left = a.left + a.width / 2 - r.width / 2;
-    left = Math.max(8, Math.min(left, window.innerWidth - r.width - 8));
-    let top = a.top - r.height - 6;
+    let left = a.left + a.width / 2 - w / 2;
+    left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
+    let top = a.top - h - 6;
     if (top < 8) top = a.bottom + 6;
     tipEl.style.left = left + 'px';
     tipEl.style.top = top + 'px';
+    // 相邻节点间快速移动时即时出现，避免每次都播入场动画。
+    tipEl.classList.toggle('instant', performance.now() - tipHideAt < 400);
+    tipEl.classList.add('show');
   }
 
   function hideTip() {
-    tipEl.hidden = true;
+    if (!tipEl.classList.contains('show')) return;
+    tipEl.classList.remove('show');
+    tipHideAt = performance.now();
   }
 
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -264,15 +269,20 @@
       el.appendChild(label);
       el.appendChild(count);
 
-      el.addEventListener('mouseenter', () => {
+      const enter = () => {
         highlight(n.id);
         // 仅在标签被截断时提示完整文本。
         if (label.scrollHeight > label.clientHeight + 1) showTip(n.label, el);
-      });
-      el.addEventListener('mouseleave', () => {
+      };
+      const leave = () => {
         clearHighlight();
         hideTip();
-      });
+      };
+      el.tabIndex = 0;
+      el.addEventListener('mouseenter', enter);
+      el.addEventListener('mouseleave', leave);
+      el.addEventListener('focus', enter);
+      el.addEventListener('blur', leave);
       nodesEl.appendChild(el);
       nodeEls.set(n.id, el);
     }
