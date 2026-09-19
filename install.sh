@@ -22,7 +22,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.9.40"
+shell_version="1.6.9.41"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -1133,7 +1133,7 @@ anytls_user_menu() {
         echo -e "${Green}3.${Font} 删除用户"
         echo -e "${Green}4.${Font} 修改用户密码"
         echo -e "${Green}5.${Font} 修改用户名"
-        echo -e "${Green}6.${Font} 返回上级菜单 \n"
+        echo -e "${Green}0.${Font} 返回上级菜单 \n"
         read -rp "请输入数字：" user_menu_num
         case ${user_menu_num} in
         1)
@@ -1151,7 +1151,7 @@ anytls_user_menu() {
         5)
             anytls_user_rename
             ;;
-        6)
+        0)
             break
             ;;
         *)
@@ -2137,7 +2137,7 @@ vmess_user_menu() {
         echo -e "${Green}3.${Font} 删除用户"
         echo -e "${Green}4.${Font} 更换用户 UUID"
         echo -e "${Green}5.${Font} 修改用户名"
-        echo -e "${Green}6.${Font} 返回上级菜单 \n"
+        echo -e "${Green}0.${Font} 返回上级菜单 \n"
         read -rp "请输入数字：" user_menu_num
         case ${user_menu_num} in
         1)
@@ -2155,7 +2155,7 @@ vmess_user_menu() {
         5)
             vmess_user_rename
             ;;
-        6)
+        0)
             break
             ;;
         *)
