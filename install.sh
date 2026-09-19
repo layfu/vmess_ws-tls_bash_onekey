@@ -22,7 +22,7 @@ OK="${Green}[OK]${Font}"
 Error="${Red}[错误]${Font}"
 
 # 版本
-shell_version="1.6.9.41"
+shell_version="1.6.9.42"
 shell_mode="None"
 github_branch="master"
 version_cmp="/tmp/version_cmp.tmp"
@@ -1312,7 +1312,7 @@ anytls_routing_ensure_geodata() {
 
 singbox_geodata_update() {
     if [[ ! -f "${singbox_bin_dir}" ]]; then
-        echo -e "${Error} ${RedBG} sing-box 未安装，请先安装 AnyTLS ${Font}"
+        echo -e "${Error} ${RedBG} sing-box 未安装，请先安装 VMess 或 AnyTLS ${Font}"
         return 1
     fi
     singbox_geodata_download
@@ -1463,7 +1463,7 @@ anytls_block_ip_menu() {
 }
 
 anytls_warp_user_list() {
-    echo -e "${OK} ${GreenBG} 当前 AnyTLS WARP 用户列表（仅 user 模式生效）${Font}"
+    echo -e "${OK} ${GreenBG} 当前 WARP 用户列表（VMess / AnyTLS 共用，仅 user 模式生效）${Font}"
     if [[ ! -f "${anytls_warp_users_file}" ]] || [[ ! -s "${anytls_warp_users_file}" ]]; then
         echo -e "${Red} 无 ${Font}"
         return 0
@@ -1477,7 +1477,7 @@ anytls_warp_user_list() {
 }
 
 anytls_warp_user_add() {
-    read -rp "请输入要走 WARP 的用户名（需与 AnyTLS 用户名一致）:" warp_user
+    read -rp "请输入要走 WARP 的用户名（需与 VMess / AnyTLS 用户名一致）:" warp_user
     [[ -z "${warp_user}" ]] && return 1
     if [[ "${warp_user}" =~ [[:space:]] ]]; then
         echo -e "${Error} ${RedBG} 用户名不能包含空格 ${Font}"
@@ -1487,12 +1487,12 @@ anytls_warp_user_add() {
     echo "${warp_user}" >>"${anytls_warp_users_file}"
     anytls_conf_add
     systemctl restart sing-box
-    judge "AnyTLS WARP 用户添加"
+    judge "WARP 用户添加"
 }
 
 anytls_warp_user_del() {
     if [[ ! -s "${anytls_warp_users_file}" ]]; then
-        echo -e "${Error} ${RedBG} AnyTLS WARP 用户列表为空 ${Font}"
+        echo -e "${Error} ${RedBG} WARP 用户列表为空 ${Font}"
         return 1
     fi
     anytls_warp_user_list
@@ -1501,13 +1501,13 @@ anytls_warp_user_del() {
     sed -i "/^${del_user}$/d" "${anytls_warp_users_file}"
     anytls_conf_add
     systemctl restart sing-box
-    judge "AnyTLS WARP 用户删除"
+    judge "WARP 用户删除"
 }
 
 anytls_warp_user_menu() {
     while true; do
         clear_screen
-        echo -e "\t 管理 AnyTLS WARP 用户"
+        echo -e "\t 管理 WARP 用户（VMess / AnyTLS 共用）"
         echo -e "${Green}1.${Font} 查看 WARP 用户列表"
         echo -e "${Green}2.${Font} 添加 WARP 用户"
         echo -e "${Green}3.${Font} 删除 WARP 用户"
@@ -1536,7 +1536,7 @@ anytls_warp_user_menu() {
 
 anytls_routing_menu() {
     if [[ ! -f "${singbox_conf}" ]]; then
-        echo -e "${Error} ${RedBG} AnyTLS 未安装，请先安装 ${Font}"
+        echo -e "${Error} ${RedBG} sing-box 未安装，请先安装 VMess 或 AnyTLS ${Font}"
         pause_continue
         return 1
     fi
@@ -1549,7 +1549,7 @@ anytls_routing_menu() {
         [[ "${anytls_block_bt}" == "1" ]] && bt_s="开"
         [[ "${anytls_warp_mode}" == "all" ]] && warp_s="all(全量WARP)"
         [[ "${anytls_warp_mode}" == "user" ]] && warp_s="user(指定用户)"
-        echo -e "\t 路由规则（屏蔽）"
+        echo -e "\t 路由规则（VMess / AnyTLS 共用）"
         echo -e "${Green}1.${Font} 禁止国内地址  [${cn_s}]"
         echo -e "${Green}2.${Font} 禁止广告地址  [${ads_s}]"
         echo -e "${Green}3.${Font} 禁止 BT 协议  [${bt_s}]"
@@ -1601,7 +1601,7 @@ anytls_routing_menu() {
             anytls_routing_save
             anytls_conf_add
             systemctl restart sing-box
-            judge "AnyTLS WARP 出站模式 切换"
+            judge "WARP 出站模式 切换"
             ;;
         7)
             anytls_warp_user_menu
